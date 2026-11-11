@@ -1,52 +1,49 @@
 # Lambda container image for the VW Autoreport.
 #
 # Build (from the repository root):
-#   docker build -f deployment/Dockerfile --secret id=azure_pat,env=AZURE_DEVOPS_PAT -t vw-autoreport .
+#   docker build -f deployment/Dockerfile -t vw-autoreport .
 #
-# The private pycore dependency is fetched from Azure DevOps; the PAT is passed as a
-# BuildKit secret and never stored in a layer.
+# No network credentials are needed at build time: the internal pycore package is
+# vendored as a wheel in ./vendor and all other dependencies are pinned in
+# requirements-docker.txt (generated from poetry.lock, see README).
 
-# ---------------------------------------------------------------------------- #
-# Stage 1: base runtime with the SQL Server ODBC driver
-# ---------------------------------------------------------------------------- #
-FROM public.ecr.aws/lambda/python:3.12 AS base
+FROM public.ecr.aws/lambda/python:3.12
 
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# ------------------------- ODBC driver for SQL Server ------------------------ #
 # pycore imports pyodbc unconditionally and the LOCAL resource mode talks to the DQN
 # SQL Server through "ODBC Driver 18 for SQL Server".
-RUN dnf install -y unixODBC unixODBC-devel gcc gcc-c++ git tar gzip \
+RUN dnf install -y unixODBC unixODBC-devel gcc gcc-c++ \
     && curl -sSL -o /etc/yum.repos.d/mssql-release.repo https://packages.microsoft.com/config/rhel/9/prod.repo \
     && ACCEPT_EULA=Y dnf install -y msodbcsql18 \
     && dnf clean all \
     && odbcinst -q -d
 
-# ---------------------------------------------------------------------------- #
-# Stage 2: resolve the dependency list from poetry.lock
-# ---------------------------------------------------------------------------- #
-FROM base AS deps
+# ------------------------------ Python deps ---------------------------------- #
+COPY vendor ./vendor
+COPY requirements-docker.txt .
+RUN pip install --no-cache-dir -r requirements-docker.txt \
+    && python -c "import pycore, pptx, boto3, pyodbc; print('deps ok')" \
+    && rm -rf ./vendor requirements-docker.txt
 
-COPY pyproject.toml poetry.lock ./
-RUN pip install --no-cache-dir "poetry>=1.8,<2" poetry-plugin-export \
-    && poetry export --without-hashes --only main -f requirements.txt -o requirements.txt
+# ------------------------- Optional internal CA bundle ----------------------- #
+# Place PEM files in deployment/certs/ (e.g. the VW root CA) to make them trusted by
+# requests (DQN API) and by the ODBC driver (SQL Server with Encrypt=yes). The folder
+# ships with a .gitkeep so the COPY succeeds even when empty.
+COPY deployment/certs ./certs
+RUN if ls ./certs/*.pem >/dev/null 2>&1; then \
+      cat ./certs/*.pem > ./certs/ca-bundle.pem && chmod 644 ./certs/ca-bundle.pem \
+      && cp ./certs/*.pem /etc/pki/ca-trust/source/anchors/ \
+      && update-ca-trust extract; \
+    fi
+# Read by lambda_handler: activates REQUESTS_CA_BUNDLE / SSL_CERT_FILE when the file exists.
+# The system trust store above covers the ODBC driver (Encrypt=yes).
+ENV CA_BUNDLE_PATH=${LAMBDA_TASK_ROOT}/certs/ca-bundle.pem
 
-# pycore comes from a private git repo: inject the PAT at install time only
-RUN --mount=type=secret,id=azure_pat \
-    PAT="$(cat /run/secrets/azure_pat 2>/dev/null || true)" \
-    && if [ -n "$PAT" ]; then \
-         sed -i "s#https://factorynavigator@dev.azure.com#https://pat:${PAT}@dev.azure.com#" requirements.txt; \
-       fi \
-    && pip install --no-cache-dir -r requirements.txt \
-    && rm -f requirements.txt \
-    && python -c "import pycore, pptx, boto3, pyodbc; print('deps ok')"
-
-# poetry is only needed for the export above
-RUN pip uninstall -y poetry poetry-plugin-export >/dev/null 2>&1; true
-
-# ---------------------------------------------------------------------------- #
-# Stage 3: application
-# ---------------------------------------------------------------------------- #
-FROM deps AS app
-
-COPY pptcreator ${LAMBDA_TASK_ROOT}/pptcreator
+# ------------------------------ Application ---------------------------------- #
+COPY pptcreator ./pptcreator
+RUN chmod -R a+rX ./pptcreator
 
 # pycore reads these at import time; the SAM template can override them.
 ENV APP_NAME=VwAutoreport \

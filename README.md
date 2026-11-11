@@ -74,20 +74,41 @@ tests are written to `tests/result/` for visual inspection.
 
 ## Deployment
 
-- `deployment/Dockerfile` -- Lambda container image (ODBC Driver 18 + pycore from the
-  private Azure DevOps repo; the PAT is passed as a BuildKit secret `azure_pat`).
+- `deployment/Dockerfile` -- Lambda container image. Installs ODBC Driver 18, then
+  `requirements-docker.txt` (pinned, generated from `poetry.lock`) with `pycore` from
+  the vendored wheel in `vendor/`. No credentials are needed at build time.
+- `deployment/certs/` -- drop internal root CA `.pem` files here if the DQN host or
+  SQL Server use a VW-internal CA; they are bundled into the image and trusted
+  automatically (never committed).
 - `deployment/template.yaml` -- SAM stack: Lambda in VPC, S3 bucket, EventBridge weekly
   rule (disabled by default), IAM, log group. Secrets are resolved from Secrets Manager.
 - `.github/workflows/deploy.yml` -- test, build, push to ECR, `sam deploy` (`main` -> dev,
   tags `v*` -> prod), upload the template to the bucket.
 
-Local image build and smoke test:
+After changing dependencies: `poetry lock`, then `python deployment/export_requirements.py`.
+After a pycore update: see `vendor/README.md`.
+
+Local image build and smoke test (Lambda Runtime Interface Emulator is part of the base image):
 
 ```powershell
-$env:AZURE_DEVOPS_PAT = "<pat>"
-docker build -f deployment/Dockerfile --secret id=azure_pat,env=AZURE_DEVOPS_PAT -t vw-autoreport .
-docker run --rm -p 9000:8080 -e S3_ENABLED=false -e MAIL_ENABLED=false vw-autoreport
-curl -XPOST "http://localhost:9000/2015-03-31/functions/function/invocations" -d '{"mode":"manual","brand":"Audi","current_period":"KW45","reference_period":"KW37"}'
+docker build -f deployment/Dockerfile -t vw-autoreport .
+docker run -d --name autoreport -p 9000:8080 `
+  -v "${PWD}\tests\unit\test_data\VW_Template_Overview.pptx:/opt/template/VW_Template_Overview.pptx:ro" `
+  -e S3_ENABLED=false -e MAIL_ENABLED=false `
+  -e LOCAL_SQLSERVER_CONN_STR="Driver={ODBC Driver 18 for SQL Server};Server=x;Database=ReportDB;Uid=u;Pwd=p;" `
+  -e BASE_REQUEST_URL=dqn.example -e ENDPOINTBASEPATH=https://dqn.example vw-autoreport
+docker exec autoreport sh -c "mkdir -p /tmp/autoreport_data/ppt_creator && cp /opt/template/*.pptx /tmp/autoreport_data/ppt_creator/"
+Invoke-WebRequest -Method Post -Uri "http://localhost:9000/2015-03-31/functions/function/invocations" `
+  -ContentType application/json -Body '{"mode":"manual","brand":"Audi","current_period":"KW45","reference_period":"KW37"}'
+docker rm -f autoreport
+```
+
+Manual push to ECR without the workflow:
+
+```powershell
+aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
+docker tag vw-autoreport:latest <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
+docker push <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
 ```
 
 ## Template contract

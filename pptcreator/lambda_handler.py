@@ -33,6 +33,13 @@ os.environ.setdefault("RESOURCE_TYPE", "LOCAL")
 if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") and not os.environ.get("LOCAL_BLOB_DIR"):
     os.environ["LOCAL_BLOB_DIR"] = "/tmp/autoreport_data"
 
+# Optional internal CA bundle baked into the image (deployment/certs/*.pem). Only
+# activated when the file exists, so images without certs keep the system defaults.
+_ca_bundle = os.environ.get("CA_BUNDLE_PATH")
+if _ca_bundle and os.path.isfile(_ca_bundle):
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", _ca_bundle)
+    os.environ.setdefault("SSL_CERT_FILE", _ca_bundle)
+
 from pptcreator.config import settings  # noqa: E402
 from pptcreator.creator.get_config.get_kpi_deck_config import ReportRequest  # noqa: E402
 from pptcreator.creator.graph_steer_creation_process import (  # noqa: E402
