@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: VW Autoreport - weekly KPI PowerPoint decks rendered in Lambda and sent via SES
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues: [dev, prod]
+    Default: dev
+  ImageUri:
+    Type: String
+    Description: ECR image URI (set by the deploy pipeline)
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets with connectivity to the VW network (DQN host + SQL Server)
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: Security group allowing egress to the DQN host (443) and SQL Server (1433)
+  SesSender:
+    Type: String
+    Description: Verified SES sender address
+  DqnHost:
+    Type: String
+    Description: DQN host without scheme, e.g. dqn.volkswagen.de
+  SqlConnStringSecretArn:
+    Type: String
+    Description: Secrets Manager ARN holding the ODBC connection string (plain string secret)
+  DqnCredentialsSecretArn:
+    Type: String
+    Description: "Secrets Manager ARN holding a JSON secret with keys username and password"
+  WeeklyScheduleExpression:
+    Type: String
+    Default: cron(0 6 ? * MON *)
+    Description: EventBridge schedule (UTC) for the weekly run
+  WeeklyScheduleEnabled:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+  MailEnabled:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+  KpiSource:
+    Type: String
+    AllowedValues: [stub, sql]
+    Default: stub
+
+Conditions:
+  ScheduleEnabled: !Equals [!Ref WeeklyScheduleEnabled, "true"]
+
+Resources:
+  ReportBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldReports
+            Status: Enabled
+            Prefix: reports/
+            ExpirationInDays: 180
+
+  AutoreportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub vw-autoreport-${Stage}
+      PackageType: Image
+      ImageUri: !Ref ImageUri
+      MemorySize: 2048
+      Timeout: 900
+      EphemeralStorage:
+        Size: 1024
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Environment:
+        Variables:
+          APP_NAME: VwAutoreport
+          RESOURCE_TYPE: LOCAL
+          LOCAL_BLOB_DIR: /tmp/autoreport_data
+          APP_DB_NAME: ReportDB
+          LOCAL_SQLSERVER_DB: ReportDB
+          # Secrets are resolved by CloudFormation at deploy time into env vars that
+          # pycore's EnvVault / LocalSettings read. Rotation requires a redeploy.
+          LOCAL_SQLSERVER_CONN_STR: !Sub "{{resolve:secretsmanager:${SqlConnStringSecretArn}}}"
+          USERNAME: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:username}}"
+          PASSWORD: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:password}}"
+          BASE_REQUEST_URL: !Ref DqnHost
+          ENDPOINTBASEPATH: !Sub https://${DqnHost}
+          AWS_REGION_NAME: !Ref AWS::Region
+          S3_ENABLED: "true"
+          S3_BUCKET: !Ref ReportBucket
+          S3_TEMPLATE_KEY: templates/VW_Template_Overview.pptx
+          S3_OUTPUT_PREFIX: !Sub reports/${Stage}
+          MAIL_ENABLED: !Ref MailEnabled
+          SES_SENDER: !Ref SesSender
+          SES_RECIPIENTS_MODE: bcc
+          KPI_SOURCE: !Ref KpiSource
+          REPORT_LANGUAGE: DE
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
+        - S3WritePolicy:
+            BucketName: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendRawEmail
+                - ses:SendEmail
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref SqlConnStringSecretArn
+                - !Ref DqnCredentialsSecretArn
+        - VPCAccessPolicy: {}
+      Events:
+        WeeklyRun:
+          Type: Schedule
+          Properties:
+            Name: !Sub vw-autoreport-${Stage}-weekly
+            Schedule: !Ref WeeklyScheduleExpression
+            Enabled: !If [ScheduleEnabled, true, false]
+            Input: '{"mode": "scheduled"}'
+
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/vw-autoreport-${Stage}
+      RetentionInDays: 90
+
+Outputs:
+  FunctionName:
+    Value: !Ref AutoreportFunction
+  BucketName:
+    Value: !Ref ReportBucket
+  ManualInvokeExample:
+    Value: !Sub >-
+      aws lambda invoke --function-name ${AutoreportFunction}
+      --cli-binary-format raw-in-base64-out
+      --payload '{"mode":"manual","brand":"Audi","current_period":"KW45","reference_period":"KW37","recipients":["you@example.com"]}'
+      out.json

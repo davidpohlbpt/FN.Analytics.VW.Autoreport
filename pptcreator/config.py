@@ -1,10 +1,66 @@
+"""Project settings.
+
+All values are read from environment variables (case-insensitive) and can be set in
+``.env`` for local runs. In AWS Lambda they are provided by the SAM template; secrets
+are injected from Secrets Manager into the environment and read by pycore's EnvVault.
+"""
+
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class CreatorSettings(BaseSettings):
 
+    # ------------------------------- Database -------------------------------- #
     app_db_schema: str = "control"
+    """Schema of the control tables (legacy templates/mappings/recipients)."""
+
+    recipients_schema: str = "control"
+    """Schema of the report recipient table used by the KPI deck process."""
+
+    recipients_table: str = "T_CONTROL_Autoreport_Recipients"
+    """Name of the report recipient table used by the KPI deck process."""
+
+    # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"
+    """Container (folder) in pycore storage holding the template and the outputs."""
+
+    template_file_name: str = "VW_Template_Overview.pptx"
+    """Template file name inside ``storage_container``."""
+
+    # --------------------------------- S3 ------------------------------------ #
+    s3_enabled: bool = False
+    """When false, no S3 call is made; template and outputs stay in pycore storage."""
+
+    s3_bucket: str | None = None
+    s3_template_key: str = "templates/VW_Template_Overview.pptx"
+    s3_output_prefix: str = "reports"
+
+    # --------------------------------- SES ----------------------------------- #
+    mail_enabled: bool = False
+    """When false, the e-mail step is skipped and only logged."""
+
+    ses_sender: str | None = None
+    """Verified SES sender address."""
+
+    ses_recipients_mode: str = Field(default="bcc", pattern="^(bcc|to)$")
+    """Whether recipients are placed in ``To`` or ``Bcc``."""
+
+    ses_max_attachment_mb: int = 35
+    """SES hard limit is 40 MB for the whole raw message; keep a safety margin."""
+
+    aws_region: str | None = Field(default=None, validation_alias="AWS_REGION_NAME")
+    """Region for boto3 clients. Read from ``AWS_REGION_NAME`` because ``AWS_REGION`` is a
+    reserved Lambda variable. ``None`` lets boto3 use its default resolution (which in
+    Lambda is ``AWS_REGION`` anyway)."""
+
+    # ------------------------------- Report ---------------------------------- #
+    report_language: str = Field(default="DE", pattern="^(DE|EN)$")
+    commodity_charts_per_slide: int = 7
+    """Number of commodity doughnuts on the detail template slide (Chart 3..9)."""
+
+    kpi_source: str = Field(default="stub", pattern="^(stub|sql)$")
+    """Which KpiSource implementation to use. ``sql`` is wired once the table is known."""
 
 
 settings = CreatorSettings()

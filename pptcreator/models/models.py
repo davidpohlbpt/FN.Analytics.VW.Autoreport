@@ -1,3 +1,5 @@
+import datetime as dt
+
 import sqlalchemy as sa
 from pycore.easy import DeclarativeBase
 from sqlalchemy.orm import Mapped, mapped_column
@@ -101,3 +103,35 @@ class Recipients(DeclarativeBase):
     is_active: Mapped[bool]
     """Indicates whether the recipient is active
     """
+
+
+class ReportRecipients(DeclarativeBase):
+    """Recipient list of the KPI deck ("Empfängerliste" maintained in the DQN frontend).
+
+    One row per recipient and brand. Column names follow the planned frontend table:
+    id, email, lasteditedat, brand, reference_timestamp, send_now. Adjust here (and
+    only here) if the frontend table ends up with different names.
+    """
+
+    __tablename__ = settings.recipients_table
+    __table_args__ = {"schema": settings.recipients_schema, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    email: Mapped[str] = mapped_column(sa.String(500))
+    """E-mail address of the recipient"""
+
+    brand: Mapped[str] = mapped_column(sa.String(200))
+    """Brand the recipient wants to receive, e.g. 'Audi'"""
+
+    reference_timestamp: Mapped[str | None] = mapped_column(sa.String(50))
+    """Reference period to compare against, e.g. 'KW37'; None -> default"""
+
+    send_now: Mapped[bool | None] = mapped_column(default=False)
+    """Ad hoc request flag set by the frontend; reset after processing"""
+
+    is_active: Mapped[bool | None] = mapped_column(default=True)
+    """Allows disabling a recipient without deleting the row"""
+
+    lasteditedat: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)
+    """Last modification in the frontend"""
