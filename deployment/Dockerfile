@@ -7,7 +7,7 @@
 # vendored as a wheel in ./vendor and all other dependencies are pinned in
 # requirements-docker.txt (generated from poetry.lock, see README).
 
-FROM public.ecr.aws/lambda/python:3.12
+FROM public.ecr.aws/lambda/python:3.11
 
 WORKDIR ${LAMBDA_TASK_ROOT}
 
