@@ -1,7 +1,7 @@
-"""End-to-end: Lambda event -> deck rendered from the VW template -> S3 -> SES.
+"""End-to-end through the three Lambda handlers and the all-in-one handler.
 
-Uses the stub KPI source, moto for AWS and pycore's in-memory SQLite for the recipient
-table. Writes the manual-mode deck to tests/result/ for visual inspection.
+Control tables in pycore's in-memory SQLite, template in moto S3, decks in moto S3,
+e-mails via moto SES, KPI data from the stub source. Writes decks to tests/result/.
 """
 
 import datetime as dt
@@ -16,165 +16,229 @@ from pptcreator.config import settings
 from pptcreator.creator.graph_steer_creation_process import (
     current_calendar_week,
     default_reference_week,
-    group_recipients,
 )
 from pptcreator.kpi.registry import KPIS
-from pptcreator.models.models import ReportRecipients
-from tests.unit.infra.conftest import BUCKET, aws  # noqa: F401  (fixture re-export)
+from pptcreator.models.models import AutoreportRecipients, AutoreportRuns
+from pptcreator.utils.read_data import read_data
+from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables  # noqa: F401
+from tests.unit.infra.conftest import BUCKET, aws  # noqa: F401
 
 TEMPLATE = Path(__file__).resolve().parent / "test_data" / "VW_Template_Overview.pptx"
 RESULT_DIR = Path(__file__).resolve().parents[1] / "result"
+TEMPLATE_KEY = "templates/VW_Template_Overview.pptx"
 
 
 @pytest.fixture
-def template_in_s3(aws):  # noqa: F811
-    aws["s3"].put_object(Bucket=BUCKET, Key=settings.s3_template_key, Body=TEMPLATE.read_bytes())
+def stack(aws, seed_control_tables, easy_test):  # noqa: F811
+    aws["s3"].put_object(Bucket=BUCKET, Key=TEMPLATE_KEY, Body=TEMPLATE.read_bytes())
+    seed_control_tables(f"s3://{BUCKET}/{TEMPLATE_KEY}", target_location=f"s3://{BUCKET}/reports/dev")
     return aws
 
 
-def _deck_from_storage(easy_test, file_name: str) -> Presentation:
-    data = easy_test.storage.read_blob(
-        container_name=settings.storage_container, blob_name=file_name, decode=False
-    )
+def _deck(stack, key: str) -> Presentation:
+    data = stack["s3"].get_object(Bucket=BUCKET, Key=key)["Body"].read()
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    out = RESULT_DIR / file_name
+    out = RESULT_DIR / key.rsplit("/", 1)[-1]
     out.write_bytes(data)
     return Presentation(str(out))
 
 
-def test_manual_mode_end_to_end(template_in_s3, easy_test):
+def _runs() -> pd.DataFrame:
+    return read_data(AutoreportRuns, [], [])
+
+
+# ------------------------------------------------------------------------------ #
+# Lambda 1
+# ------------------------------------------------------------------------------ #
+
+
+def test_plan_scheduled(stack):
+    out = lambda_handler.plan_handler(
+        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "KW45", "reference_period": "KW40"}, None
+    )
+
+    assert out["count"] == 2
+    by_brand = {r["brand"]: r for r in out["requests"]}
+    assert by_brand["Audi"]["reference_period"] == "KW37"
+    assert by_brand["Audi"]["recipients"] == ["a@x.de", "b@x.de"]
+    assert by_brand["Seat"]["reference_period"] == "KW40"  # template default from event
+    assert all(r["run_id"] == out["run_id"] and r["trigger"] == "scheduled" for r in out["requests"])
+
+    runs = _runs()
+    assert len(runs) == 2 and set(runs["status"]) == {"queued"}
+    # scheduled run must not touch send_now
+    assert read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
+
+
+def test_plan_adhoc_clears_send_now(stack):
+    out = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID, "current_period": "KW45"}, None)
+
+    assert out["count"] == 1
+    assert out["requests"][0]["recipients"] == ["b@x.de"]
+    assert out["requests"][0]["recipient_ids"] == [2]
+    assert not read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
+    assert read_data(AutoreportRecipients, ["id"], [4])["send_now"].iloc[0]  # inactive row untouched
+
+
+def test_plan_rejects_bad_trigger(stack):
+    with pytest.raises(ValueError, match="trigger must be"):
+        lambda_handler.plan_handler({"trigger": "manual"}, None)
+
+
+# ------------------------------------------------------------------------------ #
+# Lambda 2
+# ------------------------------------------------------------------------------ #
+
+
+def test_render_handler_end_to_end(stack):
     event = {
-        "mode": "manual",
+        "template_id": TEMPLATE_ID,
         "brand": "Audi",
         "current_period": "KW45",
         "reference_period": "KW37",
-        "recipients": ["a@example.com", "b@example.com"],
+        "recipients": ["a@example.com"],
+        "run_id": "run-1",
+        "trigger": "manual",
     }
 
-    summary = lambda_handler.handler(event, context=None)
+    out = lambda_handler.render_handler(event, None)
 
-    assert summary["decks"] == 1
-    assert summary["sent"] == 1, summary
-    result = summary["results"][0]
-    assert result["status"] == "sent"
-    assert result["file_name"] == "VW_KPI_Report_Audi_KW45_vs_KW37.pptx"
-    assert result["s3_key"] == f"{settings.s3_output_prefix}/{result['file_name']}"
-    assert result["message_id"]
+    assert out["status"] == "rendered"
+    assert out["file_name"] == "VW_KPI_Report_Audi_KW45_vs_KW37.pptx"
+    assert out["bucket"] == BUCKET
+    assert out["s3_key"] == f"reports/dev/{out['file_name']}"  # target_location from the template table
+    assert out["slides"] == len(KPIS) * 3  # Audi stub: 10 commodities -> 2 detail slides per KPI
+    assert out["size_bytes"] > 1_000_000
+    assert out["email_subject"] == "VW KPI Report Audi: KW45 vs. KW37"
+    assert out["request"]["brand"] == "Audi"
 
-    # Deck uploaded to S3
-    head = template_in_s3["s3"].head_object(Bucket=BUCKET, Key=result["s3_key"])
-    assert head["ContentLength"] > 0
-
-    # Deck structure: per KPI 1 overview + 2 detail slides (Audi stub has 10 commodities)
-    prs = _deck_from_storage(easy_test, result["file_name"])
-    assert len(prs.slides) == len(KPIS) * 3
+    prs = _deck(stack, out["s3_key"])
+    assert len(prs.slides) == out["slides"]
     first = prs.slides[0]
     assert first.shapes.title.text == KPIS[0].title
-    charts = [s for s in first.shapes if s.has_chart]
-    assert len(charts) == 2
     texts = [s.text_frame.text for s in first.shapes if s.has_text_frame]
     assert any(t.startswith("KW37 - Audi") for t in texts)
     assert any(t.startswith("KW45 - Audi") for t in texts)
-    assert any(s.name == "Legend" for s in first.shapes)
+    assert prs.slides[1].shapes.title.text == f"{KPIS[0].title} (1/2)"
+    assert len([s for s in prs.slides[1].shapes if s.has_chart]) == 7
+    assert len([s for s in prs.slides[2].shapes if s.has_chart]) == 3
 
-    second = prs.slides[1]
-    assert second.shapes.title.text == f"{KPIS[0].title} (1/2)"
-    assert len([s for s in second.shapes if s.has_chart]) == 7
-    third = prs.slides[2]
-    assert third.shapes.title.text == f"{KPIS[0].title} (2/2)"
-    assert len([s for s in third.shapes if s.has_chart]) == 3
-
-    # SES received one message per recipient
-    assert template_in_s3["ses"].get_send_quota()["SentLast24Hours"] == 2
+    # No run-log row exists for "run-1" (planner did not run) -> update is a no-op, no error
+    assert _runs().empty
 
 
-def test_manual_mode_kpi_subset_without_recipients(template_in_s3, easy_test):
-    event = {
-        "mode": "manual",
-        "brand": "Seat",
-        "current_period": "KW45",
-        "reference_period": "KW37",
-        "kpi_ids": ["kpi1"],
-    }
-    summary = lambda_handler.run(event)
-    assert summary["rendered"] == 1 and summary["sent"] == 0
-    prs = _deck_from_storage(easy_test, summary["results"][0]["file_name"])
-    assert len(prs.slides) == 2  # Seat uses the 7-commodity default -> no pagination
+def test_render_handler_kpi_subset(stack):
+    out = lambda_handler.render_handler(
+        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_age"]},
+        None,
+    )
+    assert out["slides"] == 2  # Seat: 7 commodities -> one detail slide
 
 
-def test_mail_disabled_reports_rendered(template_in_s3, easy_test, monkeypatch):
+def test_render_handler_raises_on_failure(stack, monkeypatch):
+    monkeypatch.setattr(settings, "kpi_source_override", "backend")  # no KPI table in SQLite
+    with pytest.raises(lambda_handler.RenderFailed):
+        lambda_handler.render_handler(
+            {"template_id": TEMPLATE_ID, "brand": "Audi", "current_period": "KW45", "reference_period": "KW37"}, None
+        )
+
+
+def test_render_handler_missing_template_in_s3(stack):
+    stack["s3"].delete_object(Bucket=BUCKET, Key=TEMPLATE_KEY)
+    with pytest.raises(lambda_handler.RenderFailed, match="S3SyncError"):
+        lambda_handler.render_handler(
+            {"template_id": TEMPLATE_ID, "brand": "Audi", "current_period": "KW45", "reference_period": "KW37"}, None
+        )
+
+
+# ------------------------------------------------------------------------------ #
+# Lambda 3
+# ------------------------------------------------------------------------------ #
+
+
+def test_send_handler_sends_from_s3(stack):
+    render = lambda_handler.render_handler(
+        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37",
+         "recipients": ["a@x.de", "b@x.de"], "kpi_ids": ["bka_age"]},
+        None,
+    )
+
+    out = lambda_handler.send_handler(render, None)
+
+    assert out["status"] == "sent"
+    assert out["message_id"]
+    assert out["recipients"] == ["a@x.de", "b@x.de"]
+    assert stack["ses"].get_send_quota()["SentLast24Hours"] == 2
+
+
+def test_send_handler_recipient_override_and_skip(stack, monkeypatch):
+    render = lambda_handler.render_handler(
+        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_age"]},
+        None,
+    )
+    out = lambda_handler.send_handler({**render, "recipients": ["x@x.de"]}, None)
+    assert out["status"] == "sent" and out["recipients"] == ["x@x.de"]
+
+    out = lambda_handler.send_handler(render, None)  # no recipients at all
+    assert out["status"] == "skipped"
+
     monkeypatch.setattr(settings, "mail_enabled", False)
-    summary = lambda_handler.run(
-        {
-            "mode": "manual",
-            "brand": "Seat",
-            "current_period": "KW45",
-            "reference_period": "KW37",
-            "recipients": ["a@example.com"],
-            "kpi_ids": ["kpi1"],
-        }
+    out = lambda_handler.send_handler({**render, "recipients": ["x@x.de"]}, None)
+    assert out["status"] == "skipped" and "mail_enabled" in out["error"]
+
+
+def test_send_handler_failed_render_is_skipped(stack):
+    out = lambda_handler.send_handler(
+        {"status": "failed", "request": {"brand": "Audi"}, "error": "boom", "recipients": ["x@x.de"]}, None
     )
-    assert summary["rendered"] == 1 and summary["sent"] == 0
-    assert summary["results"][0]["message_id"] is None
-    assert template_in_s3["ses"].get_send_quota()["SentLast24Hours"] == 0
+    assert out["status"] == "skipped"
 
 
-def test_failure_is_reported_not_raised(template_in_s3, easy_test, monkeypatch):
-    monkeypatch.setattr(settings, "template_file_name", "does_not_exist.pptx")
-    monkeypatch.setattr(settings, "s3_template_key", "missing/key.pptx")
-    summary = lambda_handler.run(
-        {"mode": "manual", "brand": "Audi", "current_period": "KW45", "reference_period": "KW37"}
+# ------------------------------------------------------------------------------ #
+# Step Functions round trip: plan -> render -> send, with run log
+# ------------------------------------------------------------------------------ #
+
+
+def test_state_machine_round_trip(stack):
+    plan = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "KW45"}, None)
+
+    sent = []
+    for request in plan["requests"]:
+        render = lambda_handler.render_handler(request, None)
+        sent.append(lambda_handler.send_handler(render, None))
+
+    assert [s["status"] for s in sent] == ["sent", "sent"]
+    runs = _runs().set_index("brand")
+    assert set(runs["status"]) == {"sent"}
+    assert runs.loc["Audi", "s3_key"].endswith("VW_KPI_Report_Audi_KW45_vs_KW37.pptx")
+    assert runs.loc["Seat", "message_id"]
+    assert stack["ses"].get_send_quota()["SentLast24Hours"] == 3  # 2 Audi + 1 Seat
+
+
+# ------------------------------------------------------------------------------ #
+# All-in-one handler
+# ------------------------------------------------------------------------------ #
+
+
+def test_all_in_one_manual(stack):
+    summary = lambda_handler.handler(
+        {"mode": "manual", "template_id": TEMPLATE_ID, "brand": "Audi", "current_period": "KW45",
+         "reference_period": "KW37", "recipients": ["a@example.com"]},
+        None,
     )
-    assert summary["failed"] == 1
-    assert "S3SyncError" in summary["results"][0]["error"]
+    assert summary["sent"] == 1 and summary["results"][0]["s3_key"]
 
 
-def test_invalid_mode_and_periods():
+def test_all_in_one_scheduled(stack):
+    summary = lambda_handler.run({"mode": "scheduled", "template_id": TEMPLATE_ID, "current_period": "KW45"})
+    assert summary["decks"] == 2 and summary["sent"] == 2
+
+
+def test_all_in_one_errors():
     with pytest.raises(ValueError, match="Unknown mode"):
         lambda_handler.run({"mode": "nope"})
     with pytest.raises(ValueError, match="identical"):
         lambda_handler.run({"mode": "manual", "brand": "Audi", "current_period": "KW45", "reference_period": "KW45"})
-
-
-def test_scheduled_mode_groups_recipients(template_in_s3, easy_test, data_repo):
-    data_repo.database.create_all_tables()
-    data_repo.write_table(
-        model=ReportRecipients,
-        df=pd.DataFrame(
-            [
-                {"id": 1, "email": "a@x.de", "brand": "Audi", "reference_timestamp": "KW37", "send_now": False, "is_active": True, "lasteditedat": None},
-                {"id": 2, "email": "b@x.de", "brand": "Audi", "reference_timestamp": "KW37", "send_now": False, "is_active": True, "lasteditedat": None},
-                {"id": 3, "email": "c@x.de", "brand": "Seat", "reference_timestamp": None, "send_now": False, "is_active": True, "lasteditedat": None},
-                {"id": 4, "email": "d@x.de", "brand": "Seat", "reference_timestamp": "KW30", "send_now": False, "is_active": False, "lasteditedat": None},
-                {"id": 5, "email": "", "brand": "Skoda", "reference_timestamp": "KW30", "send_now": False, "is_active": True, "lasteditedat": None},
-            ]
-        ),
-    )
-
-    summary = lambda_handler.run(
-        {"mode": "scheduled", "current_period": "KW45", "reference_period": "KW40"}
-    )
-
-    assert summary["decks"] == 2, summary
-    by_brand = {r["brand"]: r for r in summary["results"]}
-    assert by_brand["Audi"]["recipients"] == ["a@x.de", "b@x.de"]
-    assert by_brand["Audi"]["reference_period"] == "KW37"
-    assert by_brand["Seat"]["recipients"] == ["c@x.de"]
-    assert by_brand["Seat"]["reference_period"] == "KW40"  # default applied
-    assert all(r["status"] == "sent" for r in summary["results"])
-
-
-def test_group_recipients_skips_bad_reference():
-    df = pd.DataFrame(
-        [
-            {"id": 1, "email": "a@x.de", "brand": "Audi", "reference_timestamp": "garbage"},
-            {"id": 2, "email": "b@x.de", "brand": "Audi", "reference_timestamp": "KW45"},  # == current
-            {"id": 3, "email": "c@x.de", "brand": "Audi", "reference_timestamp": "KW10"},
-        ]
-    )
-    requests = group_recipients(df, current_period="KW45", default_reference_period="KW40")
-    assert len(requests) == 1
-    assert requests[0].recipients == ["c@x.de"]
 
 
 def test_week_helpers():

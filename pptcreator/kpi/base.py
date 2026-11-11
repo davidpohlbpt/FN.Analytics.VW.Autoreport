@@ -37,6 +37,20 @@ class KpiDefinition:
     average_label: str | None = "Ø"
     """Prefix for the average text in headlines; ``None`` if the KPI has no average."""
 
+    source: str = "stub"
+    """``frontend`` (DQN chart API), ``backend`` (SQL) or ``stub``."""
+
+    menu_item_id: int | None = None
+    report_id: int | None = None
+    tile_id: int | None = None
+    chart_id: int | None = None
+    """DQN identifiers, used by the frontend source."""
+
+    query_key: str | None = None
+    """Name of the query in ``sql_source.QUERIES``, used by the backend source."""
+
+    order: int = 0
+
     @property
     def categories(self) -> list[str]:
         return list(self.palette)

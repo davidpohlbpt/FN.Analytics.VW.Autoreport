@@ -114,7 +114,7 @@ def test_template_slot_validation():
 
 def test_registry():
     assert len(KPIS) == 6
-    assert [k.id for k in get_kpis(["kpi3", "kpi1"])] == ["kpi3", "kpi1"]
+    assert [k.id for k in get_kpis(["kpi3", "bka_age"])] == ["kpi3", "bka_age"]
     with pytest.raises(ValueError, match="Unknown KPI"):
         get_kpis(["nope"])
 

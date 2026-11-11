@@ -105,33 +105,152 @@ class Recipients(DeclarativeBase):
     """
 
 
-class ReportRecipients(DeclarativeBase):
-    """Recipient list of the KPI deck ("Empfängerliste" maintained in the DQN frontend).
+# ------------------------------------------------------------------------------ #
+# Autoreport control tables (ReportDB, schema settings.autoreport_schema)
+#
+#   T_Control_Autoreport_Templates   what a report is: template file, language, KPIs
+#   T_Control_Autoreport_Mappings    one row per KPI of a template: where its data
+#                                    comes from (frontend chart or backend query)
+#   T_Control_Autoreport_Recipients  who gets which brand with which reference week
+#   T_Control_Autoreport_Runs        audit log written by the Lambdas / state machine
+# ------------------------------------------------------------------------------ #
 
-    One row per recipient and brand. Column names follow the planned frontend table:
-    id, email, lasteditedat, brand, reference_timestamp, send_now. Adjust here (and
-    only here) if the frontend table ends up with different names.
-    """
+AUTOREPORT_SCHEMA = settings.autoreport_schema
 
-    __tablename__ = settings.recipients_table
-    __table_args__ = {"schema": settings.recipients_schema, "extend_existing": True}
+
+class AutoreportTemplates(DeclarativeBase):
+    __tablename__ = "T_Control_Autoreport_Templates"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
+    name: Mapped[str] = mapped_column(sa.String(200))
+    """Human readable name, e.g. 'VW KPI Weekly'"""
+
+    template_link: Mapped[str] = mapped_column(sa.String(1000))
+    """Location of the .pptx template: 's3://bucket/key' or 'container/file.pptx'"""
+
+    language: Mapped[Languages] = mapped_column(
+        sa.Enum(Languages, values_callable=lambda e: [m.value for m in e])
+    )
+
+    target_file_name: Mapped[str] = mapped_column(sa.String(500))
+    """File name pattern; placeholders {brand} {current} {reference} are substituted"""
+
+    target_location: Mapped[str | None] = mapped_column(sa.String(1000))
+    """Where rendered decks go: 's3://bucket/prefix' or a storage container; None -> default"""
+
+    default_reference_weeks_back: Mapped[int | None] = mapped_column(default=8)
+    """Reference period used when a recipient does not set one (weeks before current)"""
+
+    commodity_charts_per_slide: Mapped[int | None] = mapped_column(default=None)
+    """Detail charts per slide; None -> all chart slots found on the template slide"""
+
+    email_subject: Mapped[str | None] = mapped_column(sa.String(500))
+    """Subject pattern; placeholders {brand} {current} {reference}"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class AutoreportMappings(DeclarativeBase):
+    """One row per KPI of a template. ``source`` decides where the numbers come from."""
+
+    __tablename__ = "T_Control_Autoreport_Mappings"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    template_id: Mapped[int] = mapped_column(
+        sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Templates.id")
+    )
+
+    kpi_key: Mapped[str] = mapped_column(sa.String(100))
+    """Stable KPI identifier, e.g. 'bka_age'; also the filter value in backend queries"""
+
+    kpi_order: Mapped[int] = mapped_column(default=0)
+    """Order of the KPI in the deck"""
+
+    kpi_name: Mapped[str] = mapped_column(sa.String(200))
+    """Short name used in headlines"""
+
+    slide_title: Mapped[str] = mapped_column(sa.String(500))
+    slide_subtitle: Mapped[str | None] = mapped_column(sa.String(1000))
+
+    source: Mapped[str] = mapped_column(sa.String(20))
+    """'frontend' (DQN chart API), 'backend' (SQL on the KPI table) or 'stub'"""
+
+    # frontend source: DQN identifiers of the chart that holds the KPI
+    menu_item_id: Mapped[int | None]
+    report_id: Mapped[int | None]
+    tile_id: Mapped[int | None]
+    chart_id: Mapped[int | None]
+
+    # backend source: which query of pptcreator/kpi/sql_source.py to run
+    query_key: Mapped[str | None] = mapped_column(sa.String(100))
+
+    palette_json: Mapped[str | None] = mapped_column(sa.String(2000))
+    """JSON {category: 'rgb(r, g, b)'} in category order. None -> frontend colours"""
+
+    average_label: Mapped[str | None] = mapped_column(sa.String(20), default="Ø")
+    """Prefix for the average text in headlines; NULL/'' -> KPI has no average"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class AutoreportRecipients(DeclarativeBase):
+    """Recipient list ("Empfängerliste" maintained in the DQN frontend)."""
+
+    __tablename__ = "T_Control_Autoreport_Recipients"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    template_id: Mapped[int] = mapped_column(
+        sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Templates.id")
+    )
+
     email: Mapped[str] = mapped_column(sa.String(500))
-    """E-mail address of the recipient"""
 
     brand: Mapped[str] = mapped_column(sa.String(200))
     """Brand the recipient wants to receive, e.g. 'Audi'"""
 
     reference_timestamp: Mapped[str | None] = mapped_column(sa.String(50))
-    """Reference period to compare against, e.g. 'KW37'; None -> default"""
+    """Reference period, e.g. 'KW37' or '2026-KW37'; NULL -> template default"""
 
     send_now: Mapped[bool | None] = mapped_column(default=False)
-    """Ad hoc request flag set by the frontend; reset after processing"""
+    """Ad hoc request flag set by the frontend; cleared by the planner when picked up"""
 
     is_active: Mapped[bool | None] = mapped_column(default=True)
-    """Allows disabling a recipient without deleting the row"""
 
-    lasteditedat: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)
-    """Last modification in the frontend"""
+    last_edited_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)
+
+
+class AutoreportRuns(DeclarativeBase):
+    """Audit log: one row per deck, written by the planner and updated by the steps."""
+
+    __tablename__ = "T_Control_Autoreport_Runs"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(sa.String(100))
+    """UUID shared by all decks of one planner invocation"""
+
+    template_id: Mapped[int]
+    brand: Mapped[str] = mapped_column(sa.String(200))
+    current_period: Mapped[str] = mapped_column(sa.String(50))
+    reference_period: Mapped[str] = mapped_column(sa.String(50))
+    recipients: Mapped[str] = mapped_column(sa.String(4000))
+    """Semicolon separated"""
+
+    trigger: Mapped[str] = mapped_column(sa.String(20))
+    """'scheduled' | 'adhoc' | 'manual'"""
+
+    status: Mapped[str] = mapped_column(sa.String(20))
+    """'queued' | 'rendered' | 'sent' | 'failed'"""
+
+    s3_key: Mapped[str | None] = mapped_column(sa.String(1000))
+    message_id: Mapped[str | None] = mapped_column(sa.String(200))
+    error: Mapped[str | None] = mapped_column(sa.String(4000))
+
+    created_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)
+    updated_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)

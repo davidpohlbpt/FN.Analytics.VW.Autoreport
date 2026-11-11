@@ -15,11 +15,11 @@ class CreatorSettings(BaseSettings):
     app_db_schema: str = "control"
     """Schema of the control tables (legacy templates/mappings/recipients)."""
 
-    recipients_schema: str = "control"
-    """Schema of the report recipient table used by the KPI deck process."""
+    autoreport_schema: str = "control"
+    """Schema of the T_Control_Autoreport_* tables in ReportDB."""
 
-    recipients_table: str = "T_CONTROL_Autoreport_Recipients"
-    """Name of the report recipient table used by the KPI deck process."""
+    default_template_id: int | None = None
+    """Template used when an event does not name one; None -> the only active template."""
 
     # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"
@@ -59,8 +59,8 @@ class CreatorSettings(BaseSettings):
     commodity_charts_per_slide: int = 7
     """Number of commodity doughnuts on the detail template slide (Chart 3..9)."""
 
-    kpi_source: str = Field(default="stub", pattern="^(stub|sql)$")
-    """Which KpiSource implementation to use. ``sql`` is wired once the table is known."""
+    kpi_source_override: str | None = Field(default=None, pattern="^(stub|frontend|backend)$")
+    """Force one data source for all KPIs regardless of the mapping table (testing)."""
 
 
 settings = CreatorSettings()

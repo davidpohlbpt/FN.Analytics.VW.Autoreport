@@ -1,24 +1,25 @@
-"""AWS Lambda entry point and local CLI.
+"""AWS Lambda entry points and local CLI.
 
-Event formats
--------------
-Scheduled (EventBridge cron)::
+Three handlers, one per Lambda of the state machine (see deployment/state_machine.asl.json):
 
-    {"mode": "scheduled", "current_period": "2026-KW45", "reference_period": "2026-KW37"}
+``plan_handler``  (Lambda 1, EventBridge every N minutes and weekly)
+    in:  {"trigger": "adhoc" | "scheduled", "template_id": 1,
+          "current_period": "2026-KW45", "reference_period": "2026-KW37"}   (periods optional)
+    out: {"run_id": "...", "requests": [ReportRequest, ...]}
+    Side effects: run log rows with status 'queued'; send_now cleared for ad hoc rows.
 
-``current_period`` defaults to the current ISO week, ``reference_period`` to eight
-weeks earlier. Recipients are read from the recipient table.
+``render_handler``  (Lambda 2)
+    in:  one ReportRequest (as produced by the planner, or written by hand)
+    out: RenderResult {"status": "rendered", "bucket", "s3_key", "file_name", ...}
+    Raises on failure so that Step Functions retries / catches it.
 
-Manual (testing, re-sends)::
+``send_handler``  (Lambda 3)
+    in:  the RenderResult of Lambda 2 (optionally with "recipients" override)
+    out: SendResult {"status": "sent", "message_id", ...}
 
-    {"mode": "manual", "brand": "Audi", "current_period": "KW45",
-     "reference_period": "KW37", "recipients": ["a@b.de"], "kpi_ids": ["kpi1"]}
-
-Ad hoc (``send_now`` rows only)::
-
-    {"mode": "adhoc"}
-
-The response is a JSON summary with one entry per deck.
+``handler``  (all-in-one, for local runs and a single-Lambda deployment)
+    in:  {"mode": "scheduled" | "adhoc" | "manual", ...}
+    out: summary with one entry per deck
 """
 
 from __future__ import annotations
@@ -40,30 +41,118 @@ if _ca_bundle and os.path.isfile(_ca_bundle):
     os.environ.setdefault("REQUESTS_CA_BUNDLE", _ca_bundle)
     os.environ.setdefault("SSL_CERT_FILE", _ca_bundle)
 
-from pptcreator.config import settings  # noqa: E402
 from pptcreator.creator.get_config.get_kpi_deck_config import ReportRequest  # noqa: E402
 from pptcreator.creator.graph_steer_creation_process import (  # noqa: E402
     DeckOutcome,
+    RenderResult,
     current_calendar_week,
-    default_reference_week,
-    steer_kpi_deck_process,
+    plan_decks,
+    render_deck,
+    run_deck,
+    send_deck,
     steer_scheduled_kpi_decks,
 )
 from pptcreator.kpi.base import KpiSource  # noqa: E402
+from pptcreator.utils import run_log  # noqa: E402
 
 logging.getLogger().setLevel(logging.INFO)
 
 MODES = ("scheduled", "manual", "adhoc")
 
 
-def get_kpi_source() -> KpiSource:
-    if settings.kpi_source == "sql":
-        raise NotImplementedError(
-            "kpi_source='sql' is not available yet; the DQN KPI table schema is pending."
-        )
-    from pptcreator.kpi.stub_source import StubKpiSource
+class RenderFailed(RuntimeError):
+    """Raised by render_handler so that Step Functions sees a task failure."""
 
-    return StubKpiSource()
+
+# ------------------------------------------------------------------------------ #
+# Lambda 1: plan
+# ------------------------------------------------------------------------------ #
+
+
+def plan_handler(event, context):
+    event = _normalise_event(event)
+    trigger = event.get("trigger") or event.get("mode") or "scheduled"
+    if trigger not in ("scheduled", "adhoc"):
+        raise ValueError(f"trigger must be 'scheduled' or 'adhoc', got {trigger!r}.")
+    _log_start(context, event)
+
+    requests = plan_decks(
+        trigger=trigger,
+        template_id=event.get("template_id"),
+        current_period=event.get("current_period"),
+        default_reference_period=event.get("reference_period"),
+        run_id=event.get("run_id"),
+    )
+    run_log.log_queued(requests)
+    if trigger == "adhoc":
+        ids = sorted({i for r in requests for i in r.recipient_ids})
+        run_log.clear_send_now(ids)
+
+    result = {
+        "run_id": requests[0].run_id if requests else event.get("run_id"),
+        "trigger": trigger,
+        "count": len(requests),
+        "requests": [r.to_event() for r in requests],
+    }
+    logging.info(f"Planned {len(requests)} deck(s) for trigger {trigger}.")
+    return result
+
+
+# ------------------------------------------------------------------------------ #
+# Lambda 2: render
+# ------------------------------------------------------------------------------ #
+
+
+def render_handler(event, context):
+    event = _normalise_event(event)
+    _log_start(context, event)
+    request = ReportRequest.from_event(event)
+
+    result = render_deck(request)
+    run_log.update_status(
+        request.run_id,
+        request.brand,
+        str(request.reference_period),
+        status=result.status,
+        s3_key=result.s3_key,
+        error=result.error,
+    )
+    if result.status != "rendered":
+        raise RenderFailed(result.error or "render failed")
+    logging.info(f"Rendered {result.file_name} ({result.slides} slides, {result.size_bytes} bytes) -> {result.s3_key}")
+    return result.as_dict()
+
+
+# ------------------------------------------------------------------------------ #
+# Lambda 3: send
+# ------------------------------------------------------------------------------ #
+
+
+def send_handler(event, context):
+    event = _normalise_event(event)
+    _log_start(context, event)
+
+    render = RenderResult(**{k: v for k, v in event.items() if k in RenderResult.__dataclass_fields__})
+    recipients = event.get("recipients")  # optional override
+    result = send_deck(render, recipients)
+
+    request = render.request or {}
+    run_log.update_status(
+        request.get("run_id"),
+        request.get("brand", ""),
+        request.get("reference_period", ""),
+        status="sent" if result.status == "sent" else ("rendered" if result.status == "skipped" else "failed"),
+        message_id=result.message_id,
+        error=result.error,
+    )
+    if result.status == "failed":
+        raise RuntimeError(result.error or "send failed")
+    return result.as_dict()
+
+
+# ------------------------------------------------------------------------------ #
+# All-in-one
+# ------------------------------------------------------------------------------ #
 
 
 def run(event: dict | None, source: KpiSource | None = None) -> dict:
@@ -72,45 +161,48 @@ def run(event: dict | None, source: KpiSource | None = None) -> dict:
     if mode not in MODES:
         raise ValueError(f"Unknown mode {mode!r}; expected one of {MODES}.")
 
-    source = source or get_kpi_source()
-    current = event.get("current_period") or current_calendar_week()
-    reference = event.get("reference_period") or default_reference_week()
-
     if mode == "manual":
         request = ReportRequest.create(
             brand=event["brand"],
-            current_period=current,
-            reference_period=event.get("reference_period") or reference,
+            current_period=event.get("current_period") or current_calendar_week(),
+            reference_period=event["reference_period"],
             recipients=event.get("recipients") or [],
+            template_id=event.get("template_id"),
             kpi_ids=event.get("kpi_ids"),
             language=event.get("language"),
             target_file_name=event.get("target_file_name"),
+            trigger="manual",
         )
-        outcomes = [steer_kpi_deck_process(request, source)]
+        outcomes = [run_deck(request, source)]
     else:
         outcomes = steer_scheduled_kpi_decks(
             source,
-            current_period=current,
-            default_reference_period=reference,
-            only_send_now=(mode == "adhoc"),
+            trigger=mode,
+            template_id=event.get("template_id"),
+            current_period=event.get("current_period"),
+            default_reference_period=event.get("reference_period"),
         )
 
     return _summary(mode, outcomes)
 
 
 def handler(event, context):
-    request_id = getattr(context, "aws_request_id", None)
-    logging.info(f"Invocation {request_id} with event: {json.dumps(event, default=str)}")
+    _log_start(context, event)
     try:
         summary = run(event)
     except Exception as exc:
-        logging.exception(f"Invocation {request_id} failed: {exc}")
+        logging.exception(f"Invocation failed: {exc}")
         raise
-    logging.info(f"Invocation {request_id} finished: {json.dumps(summary, default=str)}")
+    logging.info(f"Finished: {json.dumps(summary, default=str)}")
     return summary
 
 
 # ------------------------------------------------------------------------------ #
+
+
+def _log_start(context, event) -> None:
+    request_id = getattr(context, "aws_request_id", None)
+    logging.info(f"Invocation {request_id} with event: {json.dumps(event, default=str)[:2000]}")
 
 
 def _normalise_event(event) -> dict:
@@ -120,9 +212,8 @@ def _normalise_event(event) -> dict:
         event = json.loads(event)
     if not isinstance(event, dict):
         raise ValueError(f"Unsupported event type {type(event).__name__}.")
-    # EventBridge scheduled rules wrap custom input in "detail" only for custom events;
-    # a plain constant input arrives as the event itself. Support both.
-    if "mode" not in event and isinstance(event.get("detail"), dict):
+    # EventBridge custom events carry the payload in "detail"; constant inputs do not.
+    if "mode" not in event and "trigger" not in event and "brand" not in event and isinstance(event.get("detail"), dict):
         return event["detail"]
     return event
 
@@ -154,14 +245,16 @@ def cli():
         brand: str = typer.Option(..., help="Brand, e.g. Audi"),
         reference: str = typer.Option(..., help="Reference period, e.g. KW37"),
         current: str | None = typer.Option(None, help="Current period, default: this week"),
+        template_id: int | None = typer.Option(None, help="Template id; default: the only active one"),
         recipient: list[str] = typer.Option([], help="Recipient e-mail (repeatable)"),
-        kpi: list[str] = typer.Option([], help="KPI id subset (repeatable)"),
+        kpi: list[str] = typer.Option([], help="KPI key subset (repeatable)"),
     ):
         event = {
             "mode": "manual",
             "brand": brand,
             "reference_period": reference,
             "current_period": current,
+            "template_id": template_id,
             "recipients": recipient,
             "kpi_ids": kpi or None,
         }
@@ -171,9 +264,21 @@ def cli():
     def scheduled(
         current: str | None = typer.Option(None),
         reference: str | None = typer.Option(None),
+        template_id: int | None = typer.Option(None),
+        adhoc: bool = typer.Option(False, help="Only send_now rows"),
     ):
-        event = {"mode": "scheduled", "current_period": current, "reference_period": reference}
+        event = {
+            "mode": "adhoc" if adhoc else "scheduled",
+            "current_period": current,
+            "reference_period": reference,
+            "template_id": template_id,
+        }
         typer.echo(json.dumps(run(event), indent=2, default=str))
+
+    @app.command()
+    def render(event_file: str = typer.Argument(..., help="JSON file with one ReportRequest")):
+        with open(event_file, encoding="utf-8") as fh:
+            typer.echo(json.dumps(render_handler(json.load(fh), None), indent=2, default=str))
 
     app()
 

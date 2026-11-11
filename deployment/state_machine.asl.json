@@ -1,0 +1,128 @@
+{
+  "Comment": "VW Autoreport: plan decks from the recipient table, render each deck, send it. Replace the Resource ARNs with the deployed Lambda ARNs.",
+  "StartAt": "Plan",
+  "States": {
+    "Plan": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${PlanFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "run_id.$": "$.Payload.run_id",
+        "trigger.$": "$.Payload.trigger",
+        "count.$": "$.Payload.count",
+        "requests.$": "$.Payload.requests"
+      },
+      "ResultPath": "$.plan",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "AnyDecks"
+    },
+    "AnyDecks": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.plan.count",
+          "NumericGreaterThan": 0,
+          "Next": "Decks"
+        }
+      ],
+      "Default": "NothingToDo"
+    },
+    "NothingToDo": {
+      "Type": "Succeed"
+    },
+    "Decks": {
+      "Type": "Map",
+      "ItemsPath": "$.plan.requests",
+      "MaxConcurrency": 2,
+      "ResultPath": "$.decks",
+      "ItemProcessor": {
+        "ProcessorConfig": { "Mode": "INLINE" },
+        "StartAt": "Render",
+        "States": {
+          "Render": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${RenderFunctionArn}",
+              "Payload.$": "$"
+            },
+            "OutputPath": "$.Payload",
+            "TimeoutSeconds": 900,
+            "Retry": [
+              {
+                "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                "IntervalSeconds": 10,
+                "MaxAttempts": 2,
+                "BackoffRate": 2.0
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "RenderFailed"
+              }
+            ],
+            "Next": "Send"
+          },
+          "Send": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${SendFunctionArn}",
+              "Payload.$": "$"
+            },
+            "OutputPath": "$.Payload",
+            "Retry": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "SendFailed"
+              }
+            ],
+            "End": true
+          },
+          "RenderFailed": {
+            "Type": "Pass",
+            "Parameters": {
+              "status": "failed",
+              "step": "render",
+              "request.$": "$",
+              "error.$": "$.error"
+            },
+            "End": true
+          },
+          "SendFailed": {
+            "Type": "Pass",
+            "Parameters": {
+              "status": "failed",
+              "step": "send",
+              "request.$": "$.request",
+              "error.$": "$.error"
+            },
+            "End": true
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}

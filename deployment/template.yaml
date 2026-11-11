@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: VW Autoreport - weekly KPI PowerPoint decks rendered in Lambda and sent via SES
+Description: VW Autoreport - KPI PowerPoint decks planned, rendered and sent by three Lambdas in a Step Functions state machine
 
 Parameters:
   Stage:
@@ -9,7 +9,7 @@ Parameters:
     Default: dev
   ImageUri:
     Type: String
-    Description: ECR image URI (set by the deploy pipeline)
+    Description: ECR image URI (set by the deploy pipeline); shared by all three functions
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Private subnets with connectivity to the VW network (DQN host + SQL Server)
@@ -28,6 +28,9 @@ Parameters:
   DqnCredentialsSecretArn:
     Type: String
     Description: "Secrets Manager ARN holding a JSON secret with keys username and password"
+  DefaultTemplateId:
+    Type: String
+    Default: "1"
   WeeklyScheduleExpression:
     Type: String
     Default: cron(0 6 ? * MON *)
@@ -36,17 +39,54 @@ Parameters:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
+  AdhocPollRate:
+    Type: String
+    Default: rate(10 minutes)
+  AdhocPollEnabled:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
   MailEnabled:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-  KpiSource:
-    Type: String
-    AllowedValues: [stub, sql]
-    Default: stub
 
 Conditions:
-  ScheduleEnabled: !Equals [!Ref WeeklyScheduleEnabled, "true"]
+  WeeklyEnabled: !Equals [!Ref WeeklyScheduleEnabled, "true"]
+  AdhocEnabled: !Equals [!Ref AdhocPollEnabled, "true"]
+
+Globals:
+  Function:
+    PackageType: Image
+    Timeout: 900
+    VpcConfig:
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: !Ref SecurityGroupIds
+    Environment:
+      Variables:
+        APP_NAME: VwAutoreport
+        RESOURCE_TYPE: LOCAL
+        LOCAL_BLOB_DIR: /tmp/autoreport_data
+        APP_DB_NAME: ReportDB
+        LOCAL_SQLSERVER_DB: ReportDB
+        # Secrets are resolved by CloudFormation at deploy time into env vars that
+        # pycore's EnvVault / LocalSettings read. Rotation requires a redeploy.
+        LOCAL_SQLSERVER_CONN_STR: !Sub "{{resolve:secretsmanager:${SqlConnStringSecretArn}}}"
+        USERNAME: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:username}}"
+        PASSWORD: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:password}}"
+        BASE_REQUEST_URL: !Ref DqnHost
+        ENDPOINTBASEPATH: !Sub https://${DqnHost}
+        AWS_REGION_NAME: !Ref AWS::Region
+        AUTOREPORT_SCHEMA: control
+        DEFAULT_TEMPLATE_ID: !Ref DefaultTemplateId
+        S3_ENABLED: "true"
+        S3_BUCKET: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
+        S3_TEMPLATE_KEY: templates/VW_Template_Overview.pptx
+        S3_OUTPUT_PREFIX: !Sub reports/${Stage}
+        MAIL_ENABLED: !Ref MailEnabled
+        SES_SENDER: !Ref SesSender
+        SES_RECIPIENTS_MODE: bcc
+        REPORT_LANGUAGE: DE
 
 Resources:
   ReportBucket:
@@ -71,84 +111,114 @@ Resources:
             Prefix: reports/
             ExpirationInDays: 180
 
-  AutoreportFunction:
+  # ------------------------------ Lambda 1: plan ------------------------------ #
+  PlanFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub vw-autoreport-${Stage}
-      PackageType: Image
+      FunctionName: !Sub vw-autoreport-${Stage}-plan
       ImageUri: !Ref ImageUri
+      ImageConfig:
+        Command: ["pptcreator.lambda_handler.plan_handler"]
+      MemorySize: 1024
+      Timeout: 120
+      Policies:
+        - VPCAccessPolicy: {}
+
+  # ----------------------------- Lambda 2: render ----------------------------- #
+  RenderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub vw-autoreport-${Stage}-render
+      ImageUri: !Ref ImageUri
+      ImageConfig:
+        Command: ["pptcreator.lambda_handler.render_handler"]
       MemorySize: 2048
-      Timeout: 900
       EphemeralStorage:
         Size: 1024
-      VpcConfig:
-        SubnetIds: !Ref SubnetIds
-        SecurityGroupIds: !Ref SecurityGroupIds
-      Environment:
-        Variables:
-          APP_NAME: VwAutoreport
-          RESOURCE_TYPE: LOCAL
-          LOCAL_BLOB_DIR: /tmp/autoreport_data
-          APP_DB_NAME: ReportDB
-          LOCAL_SQLSERVER_DB: ReportDB
-          # Secrets are resolved by CloudFormation at deploy time into env vars that
-          # pycore's EnvVault / LocalSettings read. Rotation requires a redeploy.
-          LOCAL_SQLSERVER_CONN_STR: !Sub "{{resolve:secretsmanager:${SqlConnStringSecretArn}}}"
-          USERNAME: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:username}}"
-          PASSWORD: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:password}}"
-          BASE_REQUEST_URL: !Ref DqnHost
-          ENDPOINTBASEPATH: !Sub https://${DqnHost}
-          AWS_REGION_NAME: !Ref AWS::Region
-          S3_ENABLED: "true"
-          S3_BUCKET: !Ref ReportBucket
-          S3_TEMPLATE_KEY: templates/VW_Template_Overview.pptx
-          S3_OUTPUT_PREFIX: !Sub reports/${Stage}
-          MAIL_ENABLED: !Ref MailEnabled
-          SES_SENDER: !Ref SesSender
-          SES_RECIPIENTS_MODE: bcc
-          KPI_SOURCE: !Ref KpiSource
-          REPORT_LANGUAGE: DE
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
         - S3WritePolicy:
             BucketName: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
+        - VPCAccessPolicy: {}
+
+  # ------------------------------ Lambda 3: send ------------------------------ #
+  SendFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub vw-autoreport-${Stage}-send
+      ImageUri: !Ref ImageUri
+      ImageConfig:
+        Command: ["pptcreator.lambda_handler.send_handler"]
+      MemorySize: 1024
+      Timeout: 120
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
         - Statement:
             - Effect: Allow
-              Action:
-                - ses:SendRawEmail
-                - ses:SendEmail
+              Action: [ses:SendRawEmail, ses:SendEmail]
               Resource: "*"
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource:
-                - !Ref SqlConnStringSecretArn
-                - !Ref DqnCredentialsSecretArn
         - VPCAccessPolicy: {}
+
+  # ------------------------------ State machine ------------------------------- #
+  ReportStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub vw-autoreport-${Stage}
+      DefinitionUri: state_machine.asl.json
+      DefinitionSubstitutions:
+        PlanFunctionArn: !GetAtt PlanFunction.Arn
+        RenderFunctionArn: !GetAtt RenderFunction.Arn
+        SendFunctionArn: !GetAtt SendFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref PlanFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RenderFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SendFunction
       Events:
-        WeeklyRun:
+        Weekly:
           Type: Schedule
           Properties:
             Name: !Sub vw-autoreport-${Stage}-weekly
             Schedule: !Ref WeeklyScheduleExpression
-            Enabled: !If [ScheduleEnabled, true, false]
-            Input: '{"mode": "scheduled"}'
+            Enabled: !If [WeeklyEnabled, true, false]
+            Input: !Sub '{"trigger": "scheduled", "template_id": ${DefaultTemplateId}}'
+        AdhocPoll:
+          Type: Schedule
+          Properties:
+            Name: !Sub vw-autoreport-${Stage}-adhoc
+            Schedule: !Ref AdhocPollRate
+            Enabled: !If [AdhocEnabled, true, false]
+            Input: !Sub '{"trigger": "adhoc", "template_id": ${DefaultTemplateId}}'
 
-  FunctionLogGroup:
+  PlanLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/vw-autoreport-${Stage}
+      LogGroupName: !Sub /aws/lambda/vw-autoreport-${Stage}-plan
+      RetentionInDays: 90
+  RenderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/vw-autoreport-${Stage}-render
+      RetentionInDays: 90
+  SendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/vw-autoreport-${Stage}-send
       RetentionInDays: 90
 
 Outputs:
-  FunctionName:
-    Value: !Ref AutoreportFunction
+  StateMachineArn:
+    Value: !Ref ReportStateMachine
+  RenderFunctionName:
+    Value: !Ref RenderFunction
   BucketName:
     Value: !Ref ReportBucket
-  ManualInvokeExample:
+  RenderInvokeExample:
     Value: !Sub >-
-      aws lambda invoke --function-name ${AutoreportFunction}
+      aws lambda invoke --function-name ${RenderFunction}
       --cli-binary-format raw-in-base64-out
-      --payload '{"mode":"manual","brand":"Audi","current_period":"KW45","reference_period":"KW37","recipients":["you@example.com"]}'
-      out.json
+      --payload file://deployment/events/render_request.json out.json

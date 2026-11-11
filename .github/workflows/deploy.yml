@@ -10,7 +10,7 @@
 #   vars.ECR_REPOSITORY               e.g. vw-autoreport
 #   vars.SUBNET_IDS / vars.SECURITY_GROUP_IDS / vars.SES_SENDER / vars.DQN_HOST
 #   vars.SQL_CONN_SECRET_ARN / vars.DQN_CREDENTIALS_SECRET_ARN
-#   optional: vars.MAIL_ENABLED, vars.WEEKLY_SCHEDULE_ENABLED, vars.KPI_SOURCE
+#   optional: vars.MAIL_ENABLED, vars.WEEKLY_SCHEDULE_ENABLED
 #
 # main  -> test, build, push, deploy to dev
 # v*    -> test, build, push, deploy to prod (environment protection rule recommended)
@@ -110,8 +110,7 @@ jobs:
               SqlConnStringSecretArn="${{ vars.SQL_CONN_SECRET_ARN }}" \
               DqnCredentialsSecretArn="${{ vars.DQN_CREDENTIALS_SECRET_ARN }}" \
               MailEnabled="${{ vars.MAIL_ENABLED || 'false' }}" \
-              WeeklyScheduleEnabled="${{ vars.WEEKLY_SCHEDULE_ENABLED || 'false' }}" \
-              KpiSource="${{ vars.KPI_SOURCE || 'stub' }}"
+              WeeklyScheduleEnabled="${{ vars.WEEKLY_SCHEDULE_ENABLED || 'false' }}"
 
       - name: Upload template to the report bucket
         run: |

@@ -8,40 +8,66 @@ stored in S3 and e-mailed via SES.
 Built on the internal `pycore` framework (resource mode `LOCAL`: SQL Server via pyodbc,
 file storage under `/tmp`, secrets from environment variables). `pycore` is unchanged.
 
-## Pipeline
+## Architecture
+
+Three Lambdas orchestrated by a Step Functions state machine
+(`deployment/state_machine.asl.json`), all built from the same container image with
+different handlers:
 
 ```
-EventBridge (weekly cron) / manual invoke
-  -> lambda_handler.handler(event)
-       -> steer_scheduled_kpi_decks            (recipient table -> one deck per brand + reference period)
-            for each (brand, current, reference)
-              -> steer_kpi_deck_process
-                   - s3_sync.download_template   (S3 -> pycore storage, cached in /tmp)
-                   - get_kpi_deck_config
-                       - discover_chart_slots    (template: 2 overview charts, N commodity slots)
-                       - KpiSource.fetch         (stub now, DQN KPI table later)
-                       - build_output_slides     (6 KPIs x [overview + paginated detail slides])
-                       - get_template_config     (.pptx shapes: positions, fonts, legend)
-                   - graph_create_ppt            (python-pptx rendering -> pycore storage)
-                   - s3_sync.upload_output       (pycore storage -> S3)
-                   - send_email                  (SES raw e-mail with .pptx attachment)
+EventBridge (weekly) ──┐
+EventBridge (5 min)  ──┴──> Step Functions
+                              Plan   (Lambda 1, plan_handler)   recipient table -> [ReportRequest]
+                              Map over requests (concurrency 2)
+                                Render (Lambda 2, render_handler) ReportRequest -> deck in S3
+                                Send   (Lambda 3, send_handler)   deck in S3 -> SES e-mail
 ```
 
-The legacy per-template pipeline (`graph_steer_creation_process`, control tables,
+| Lambda | Handler | Input | Output | Side effects |
+|---|---|---|---|---|
+| 1 Plan | `pptcreator.lambda_handler.plan_handler` | `{"trigger": "scheduled"\|"adhoc", "template_id": 1}` | `{"run_id", "count", "requests": [...]}` | run log rows `queued`; `send_now` cleared for ad hoc rows |
+| 2 Render | `pptcreator.lambda_handler.render_handler` | one `ReportRequest` (`deployment/events/render_request.json`) | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`) | deck in S3; run log `rendered`/`failed`; raises on failure |
+| 3 Send | `pptcreator.lambda_handler.send_handler` | the `RenderResult` (+ optional `recipients` override) | `{"status": "sent", "message_id"}` | SES mail; run log `sent`/`failed` |
+| all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "manual"\|"scheduled"\|"adhoc", ...}` | summary per deck | same, in one process (local runs, single-Lambda deployment) |
+
+Lambda 2 is the core:
+
+```
+render_deck(request)
+  - get_template_config        (T_Control_Autoreport_Templates + _Mappings -> TemplateConfig, KpiDefinitions)
+  - s3_sync.download_template  (template_link s3://... -> pycore storage in /tmp)
+  - get_kpi_deck_config
+      - discover_chart_slots   (template: 2 overview charts, N commodity slots)
+      - RoutingKpiSource.fetch (per KPI: frontend = DQN chart API, backend = SQL, stub)
+      - build_output_slides    (KPIs x [overview + paginated detail slides])
+      - get_template_config    (.pptx shapes: positions, fonts, legend)
+  - graph_create_ppt           (python-pptx rendering -> pycore storage)
+  - s3_sync.upload_output      (-> target_location of the template, or the default bucket)
+```
+
+The legacy per-template pipeline (`graph_steer_creation_process`, `T_CONTROL_PptCreator_*`,
 Config Center) is still present and used by the older tests.
 
-## Lambda events
+## Control tables (ReportDB, schema `control`)
 
-```json
-{"mode": "scheduled", "current_period": "2026-KW45", "reference_period": "2026-KW37"}
-{"mode": "manual", "brand": "Audi", "current_period": "KW45", "reference_period": "KW37",
- "recipients": ["you@example.com"], "kpi_ids": ["kpi1"]}
-{"mode": "adhoc"}
-```
+DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`.
 
-`current_period` defaults to the current ISO week, `reference_period` to eight weeks
-before. The response is a summary with one entry per deck (`sent` / `rendered` /
-`failed`, S3 key, SES message id, error).
+| Table | Purpose | Key columns |
+|---|---|---|
+| `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `default_reference_weeks_back`, `email_subject` |
+| `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` |
+| `T_Control_Autoreport_Recipients` | who gets what | `template_id`, `email`, `brand`, `reference_timestamp` (`KW37`, NULL = template default), `send_now`, `is_active` |
+| `T_Control_Autoreport_Runs` | audit log | `run_id`, `brand`, periods, `status` (`queued`/`rendered`/`sent`/`failed`), `s3_key`, `message_id`, `error` |
+
+Data sources per KPI:
+
+- `frontend`: DQN chart API (`pptcreator/kpi/frontend_source.py`). Needs the mask filter
+  field names for brand / commodity / period (`DQN_FILTER_BRAND`, `DQN_FILTER_COMMODITY`,
+  `DQN_FILTER_PERIOD`). Colours come from the chart unless `palette_json` is set.
+- `backend`: SQL on the KPI table (`pptcreator/kpi/sql_source.py`). `query_key` selects a
+  query from `QUERIES`; the `default` query targets `KPI_TABLE` (env) in long format
+  `commodity, category, value, avg_text`. Replace once the real table is known.
+- `stub`: deterministic dummy data for testing.
 
 ## Configuration
 
@@ -50,14 +76,13 @@ Key switches:
 
 | Variable | Purpose |
 |---|---|
-| `RESOURCE_TYPE`, `APP_NAME`, `LOCAL_BLOB_DIR`, `LOCAL_SQLSERVER_CONN_STR` | pycore resources |
-| `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | template source and report sink |
+| `RESOURCE_TYPE`, `APP_NAME`, `LOCAL_BLOB_DIR`, `LOCAL_SQLSERVER_CONN_STR` | pycore resources (ReportDB) |
+| `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
+| `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
 | `MAIL_ENABLED`, `SES_SENDER`, `SES_RECIPIENTS_MODE` | e-mail |
-| `KPI_SOURCE` (`stub` / `sql`) | data source; `sql` is wired once the KPI table schema is known |
-| `RECIPIENTS_SCHEMA`, `RECIPIENTS_TABLE` | recipient list (`id, email, brand, reference_timestamp, send_now, is_active, lasteditedat`) |
+| `KPI_SOURCE_OVERRIDE` (`stub`/`frontend`/`backend`) | force one source for all KPIs (testing) |
+| `KPI_TABLE`, `DQN_FILTER_*` | backend / frontend source specifics |
 | `AWS_REGION_NAME` | boto3 region (`AWS_REGION` is reserved in Lambda) |
-
-KPI definitions (titles, palettes, category order) live in `pptcreator/kpi/registry.py`.
 
 ## Local development
 
