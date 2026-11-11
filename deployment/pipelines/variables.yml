@@ -1,0 +1,55 @@
+parameters:
+  - name: envName
+    type: string
+
+variables:
+  # -------------------------------- DevFactory -------------------------------- #
+  - ${{ if eq( parameters['envName'], 'devfactory') }}:
+      # Node Settings
+      - name: k8s-replicas
+        value: 1
+        #Node Affinity
+      - name: nodeLabel
+        value: Node2 #(Choose from Node0, Node1, Node2)
+      # Resource Limits
+      - name: k8s-deployment-resources-limits-cpu-aws
+        value: 500m
+      - name: k8s-deployment-resources-limits-memory-aws
+        value: 1000Mi
+      - name: k8s-deployment-resources-request-cpu-aws
+        value: 100m
+      - name: k8s-deployment-resources-request-memory-aws
+        value: 200Mi
+  # ----------------------------------- MAN ---------------------------------- #
+  - ${{ elseif eq( parameters['envName'], 'man') }}:
+      # Node Settings
+      - name: k8s-replicas
+        value: 1
+        #Node Affinity
+      - name: nodeLabel
+        value: Node2 #(Choose from Node0, Node1, Node2)
+      # Resource Limits
+      - name: k8s-deployment-resources-limits-cpu-aws
+        value: 500m
+      - name: k8s-deployment-resources-limits-memory-aws
+        value: 8000Mi
+      - name: k8s-deployment-resources-request-cpu-aws
+        value: 100m
+      - name: k8s-deployment-resources-request-memory-aws
+        value: 8000Mi
+  # --------------------------------- Defaults --------------------------------- #
+  - ${{ else }}:
+      - name: k8s-replicas
+        value: 1
+        #Node Affinity
+      - name: nodeLabel
+        value: Node2 #(Choose from Node0, Node1, Node2)
+      # Resource Limits
+      - name: k8s-deployment-resources-limits-cpu-aws
+        value: 100m
+      - name: k8s-deployment-resources-limits-memory-aws
+        value: 300Mi
+      - name: k8s-deployment-resources-request-cpu-aws
+        value: 100m
+      - name: k8s-deployment-resources-request-memory-aws
+        value: 300Mi

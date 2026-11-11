@@ -1,0 +1,45 @@
+trigger: none
+
+pr: none
+
+pool:
+  name: LinuxPool
+
+parameters:
+- name: ForceFullReview
+  displayName: 'Force Full Code Review (instead of incremental review)'
+  type: boolean
+  default: true
+- name: PullRequestId
+  displayName: 'Pull Request ID (manual runs only)'
+  type: string
+  default: ''
+
+variables:
+- group: FN.Services.AI.PullRequest.Variables
+
+workspace:
+  clean: all
+
+steps:
+  - script: |
+      git config --global credential.helper store
+      echo "https://factorynavigator:$SYSTEM_ACCESSTOKEN@dev.azure.com" > ~/.git-credentials
+    displayName: 'configure git credentials'
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - task: AIPRReview@1
+    displayName: 'Analyze the code using the DQN Private Azure OpenAI Resource'
+    inputs:
+      azureOpenAIEndpoint: $(AzureOpenAIEndpoint)
+      azureOpenAIKey: $(AzureOpenAIKey)
+      deploymentName: $(DeploymentName)
+      configFilePath: $(ConfigFilePath)
+      forceFullReview: ${{ parameters.ForceFullReview }}
+    env:
+      SYSTEM_PULLREQUEST_PULLREQUESTID: ${{ iif(ne(parameters.PullRequestId, ''), parameters.PullRequestId, '$(System.PullRequest.PullRequestId)') }}
+      SYSTEM_TEAMFOUNDATIONCOLLECTIONURI: "$(System.TeamFoundationCollectionUri)"
+      SYSTEM_TEAMPROJECTID: "$(System.TeamProjectId)"
+      BUILD_REPOSITORY_ID: "$(Build.Repository.ID)"
+      SYSTEM_ACCESSTOKEN: "$(System.AccessToken)"

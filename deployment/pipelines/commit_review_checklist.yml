@@ -1,0 +1,16 @@
+trigger: none  
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+resources:
+  repositories:
+    - repository: FN.Analytics.DevOps
+      type: git
+      name: BE_FactoryNavigator/FN.Analytics.DevOps
+
+extends:
+  template: pipelines/commit_review_checklist.yml@FN.Analytics.DevOps

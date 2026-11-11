@@ -1,0 +1,29 @@
+trigger:
+  branches:
+    include:
+      - refs/tags/v*
+
+parameters:
+  - name: confirmProdDeployment
+    displayName: Confirm Productive Deployment
+    type: boolean
+    default: false
+
+resources:
+  repositories:
+    - repository: devops
+      type: git
+      name: FN.Analytics.DevOps
+      ref: "refs/heads/master"
+
+pool:
+  name: LinuxPool
+
+stages:
+  - template: pipelines/stages/deploy.yml@devops
+    parameters:
+      serviceName: pptcreator
+      confirmProdDeployment: ${{ parameters.confirmProdDeployment }}
+      appRootPath: pptcreator
+      environments:
+        - man

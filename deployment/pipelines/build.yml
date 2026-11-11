@@ -1,0 +1,25 @@
+trigger:
+  branches:
+    include:
+      - main
+      - release/**/*
+  paths:
+    exclude:
+      - deployment/**/*
+      - docs/**/*
+
+resources:
+  repositories:
+    - repository: devops
+      type: git
+      name: FN.Analytics.DevOps
+      ref: "refs/heads/master"
+
+pool:
+  name: LinuxPool
+
+stages:
+  - template: pipelines/stages/build_and_publish.yml@devops
+    parameters:
+      serviceName: pptcreator
+      pythonVersion: 3.12
