@@ -42,6 +42,11 @@ if _ca_bundle and os.path.isfile(_ca_bundle):
     os.environ.setdefault("REQUESTS_CA_BUNDLE", _ca_bundle)
     os.environ.setdefault("SSL_CERT_FILE", _ca_bundle)
 
+# Must run before pycore is imported (it reads LOCAL_SQLSERVER_CONN_STR at import).
+from pptcreator.infra.sql_connection import configure_from_ssm  # noqa: E402
+
+configure_from_ssm()
+
 from pptcreator.creator.get_config.get_kpi_deck_config import ReportRequest  # noqa: E402
 from pptcreator.creator.graph_steer_creation_process import (  # noqa: E402
     DeckOutcome,

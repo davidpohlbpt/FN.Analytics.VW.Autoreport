@@ -132,6 +132,21 @@ def test_render_handler_kpi_subset(stack):
     assert out["slides"] == 2  # Seat: 7 commodities -> one detail slide
 
 
+def test_render_handler_output_bucket_env_overrides_template_row(stack, monkeypatch):
+    stack["s3"].create_bucket(Bucket="client-output", CreateBucketConfiguration={"LocationConstraint": "eu-central-1"})
+    monkeypatch.setattr(settings, "s3_output_bucket", "client-output")
+    monkeypatch.setattr(settings, "s3_output_prefix", "autoreport")
+
+    out = lambda_handler.render_handler(
+        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_aktualisierung"]},
+        None,
+    )
+
+    assert out["bucket"] == "client-output"
+    assert out["s3_key"] == f"autoreport/{out['file_name']}"
+    stack["s3"].head_object(Bucket="client-output", Key=out["s3_key"])
+
+
 def test_render_handler_raises_on_failure(stack, monkeypatch):
     monkeypatch.setattr(settings, "kpi_source_override", "backend")  # no KPI table in SQLite
     with pytest.raises(lambda_handler.RenderFailed):

@@ -136,13 +136,24 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         target = out_dir / outcome.file_name
-        target.write_bytes(
-            storage.read_blob(
-                container_name=settings.storage_container,
-                blob_name=outcome.file_name,
-                decode=False,
-            )
+        data = storage.read_blob(
+            container_name=settings.storage_container,
+            blob_name=outcome.file_name,
+            decode=False,
         )
+        try:
+            target.write_bytes(data)
+        except PermissionError:
+            # File is open in PowerPoint (or locked by OneDrive sync); keep a copy.
+            stem, suffix = target.stem, target.suffix
+            counter = 2
+            while True:
+                target = out_dir / f"{stem}_{counter}{suffix}"
+                if not target.exists():
+                    break
+                counter += 1
+            target.write_bytes(data)
+            logging.warning(f"Original file is locked; wrote {target.name} instead.")
         print(
             f"{outcome.status.upper()} {group.brand} {current} vs. {reference} -> {target}"
         )

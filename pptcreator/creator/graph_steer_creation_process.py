@@ -211,13 +211,13 @@ def render_deck(
         logging.info(f"Rendered {file_name}")
 
         # 4. Persist
-        target = template.target
-        s3_key = s3_sync.upload_output(
-            container,
-            file_name,
-            key_prefix=target.key if target and target.is_s3 else None,
-            bucket=target.bucket if target and target.is_s3 else None,
-        )
+        if settings.s3_output_bucket:
+            bucket, key_prefix = settings.s3_output_bucket, None  # None -> s3_output_prefix
+        elif template.target and template.target.is_s3:
+            bucket, key_prefix = template.target.bucket, template.target.key
+        else:
+            bucket, key_prefix = None, None
+        s3_key = s3_sync.upload_output(container, file_name, key_prefix=key_prefix, bucket=bucket)
 
         from pycore.easy import storage
 
@@ -226,7 +226,7 @@ def render_deck(
         result.status = "rendered"
         result.file_name = file_name
         result.container = container
-        result.bucket = (target.bucket if target and target.is_s3 else settings.s3_bucket) if s3_key else None
+        result.bucket = (bucket or settings.s3_bucket) if s3_key else None
         result.s3_key = s3_key
         result.slides = len(config_dict.get("output_slides", []))
         result.size_bytes = size

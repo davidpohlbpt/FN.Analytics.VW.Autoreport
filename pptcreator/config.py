@@ -36,6 +36,10 @@ class CreatorSettings(BaseSettings):
     s3_template_key: str = "templates/VW_Template_Overview.pptx"
     s3_output_prefix: str = "reports"
 
+    s3_output_bucket: str | None = None
+    """When set, decks are uploaded to s3://<s3_output_bucket>/<s3_output_prefix>/,
+    overriding ``target_location`` of the template row."""
+
     # --------------------------------- SES ----------------------------------- #
     mail_enabled: bool = False
     """When false, the e-mail step is skipped and only logged."""

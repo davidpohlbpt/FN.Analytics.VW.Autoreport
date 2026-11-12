@@ -95,6 +95,8 @@ Key switches:
 | Variable | Purpose |
 |---|---|
 | `RESOURCE_TYPE`, `APP_NAME`, `LOCAL_BLOB_DIR`, `LOCAL_SQLSERVER_CONN_STR` | pycore resources (ReportDB) |
+| `SQL_CONN_SSM_PARAM` (+ `SQL_ODBC_DRIVER`, `SQL_ENCRYPT`, `SQL_TRUST_SERVER_CERTIFICATE`) | Lambda: read an ADO-style connection string (`Server=..;Initial Catalog=..;User ID=..;Password=..`) from SSM and set `LOCAL_SQLSERVER_CONN_STR`/`LOCAL_SQLSERVER_DB` |
+| `S3_OUTPUT_BUCKET` | upload decks to `s3://<S3_OUTPUT_BUCKET>/<S3_OUTPUT_PREFIX>/`, overriding `target_location` of the template row |
 | `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
 | `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
 | `MAIL_ENABLED`, `SES_SENDER`, `SES_RECIPIENTS_MODE` | e-mail |
