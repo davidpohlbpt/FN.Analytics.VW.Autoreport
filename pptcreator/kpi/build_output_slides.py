@@ -78,17 +78,40 @@ def build_output_slides(
 # ------------------------------------------------------------------------------ #
 
 
-def _chart(result: KpiResult, rows: Rows, headline: str, filters: dict, show_data_labels) -> dict:
+def _chart(
+    result: KpiResult,
+    rows: Rows,
+    headline_lines: list[list[tuple[str, str]]],
+    filters: dict,
+    show_data_labels,
+) -> dict:
+    """``headline_lines``: per line a list of (text, part); part 'first' / 'rest' selects
+    the template run style (e.g. bold week, regular brand)."""
+    headline_lines = [line for line in headline_lines if any(text for text, _ in line)]
     chart = {
         "chart_type": ChartType.DOUGHNUT,
         "filters": filters,
         "fillColor": result.definition.palette,
         "rows": _ordered_rows(rows, result.definition.categories),
-        "headline": headline,
+        "headline": "\n".join("".join(text for text, _ in line) for line in headline_lines),
+        "headline_lines": headline_lines,
     }
     if show_data_labels is not None:
         chart["has_data_labels"] = show_data_labels
     return chart
+
+
+def _week(period: ReportPeriod, *, short: bool = False) -> str:
+    """'KW47/2025' (or the label as is); short: 'KW47'."""
+    label = period.display if hasattr(period, "display") else str(period)
+    if short:
+        match = re.search(r"KW\d{2}", label)
+        return match.group(0) if match else label
+    return label
+
+
+def _total_text(rows: Rows) -> str:
+    return f"{sum(r['value'] for r in rows):,.0f}".replace(",", ".")
 
 
 def _ordered_rows(rows: Rows, categories: list[str]) -> Rows:
@@ -100,11 +123,19 @@ def _ordered_rows(rows: Rows, categories: list[str]) -> Rows:
     return [{"category": c, "value": by_category[c]} for c in categories if c in by_category]
 
 
-def _avg_line(result: KpiResult, text: str | None) -> str:
+def _avg_text(result: KpiResult, text: str | None) -> str:
     label = result.definition.average_label
     if label is None or not text:
         return ""
-    return f"\n{label} {text}"
+    return f"{label} {text}"
+
+
+def _overview_lines(result: KpiResult, snapshot: KpiSnapshot) -> list[list[tuple[str, str]]]:
+    """Template: '{week} – {brand}' (week bold) / '{kpi}'."""
+    return [
+        [(_week(snapshot.period), "first"), (f" – {result.brand}", "rest")],
+        [(_avg_text(result, snapshot.average_text), "first")],
+    ]
 
 
 def _overview_slide(result: KpiResult, slots: list[str], show_data_labels) -> dict:
@@ -114,14 +145,14 @@ def _overview_slide(result: KpiResult, slots: list[str], show_data_labels) -> di
         slots[0]: _chart(
             result,
             ref.total_rows,
-            f"{ref.period} - {brand}{_avg_line(result, ref.average_text)}",
+            _overview_lines(result, ref),
             {"period": str(ref.period), "brand": brand, "role": "reference"},
             show_data_labels,
         ),
         slots[1]: _chart(
             result,
             cur.total_rows,
-            f"{cur.period} - {brand}{_avg_line(result, cur.average_text)}",
+            _overview_lines(result, cur),
             {"period": str(cur.period), "brand": brand, "role": "current"},
             show_data_labels,
         ),
@@ -143,7 +174,10 @@ def _detail_slides(result: KpiResult, slots: list[str], per_slide: int, show_dat
         logging.warning(f"{result.definition.id}/{result.brand}: no commodities, detail slide skipped.")
         return []
 
-    pages = [commodities[i : i + per_slide] for i in range(0, len(commodities), per_slide)]
+    # Balanced pages: 8 commodities with 7 slots -> 4 + 4 instead of 7 + 1
+    page_count = -(-len(commodities) // per_slide)
+    page_size = -(-len(commodities) // page_count)
+    pages = [commodities[i : i + page_size] for i in range(0, len(commodities), page_size)]
     slides = []
     for page_number, page in enumerate(pages, start=1):
         charts = {}
@@ -176,15 +210,27 @@ def _detail_slides(result: KpiResult, slots: list[str], per_slide: int, show_dat
     return slides
 
 
-def _commodity_headline(result: KpiResult, commodity: str, cur: KpiSnapshot, ref: KpiSnapshot) -> str:
+def _commodity_headline(
+    result: KpiResult, commodity: str, cur: KpiSnapshot, ref: KpiSnapshot
+) -> list[list[tuple[str, str]]]:
+    """Template: '{COM} {kpi}' / '{different KW}: {kpi}'.
+
+    {kpi} is the average (KPI with ``average_label``) or the number of BKAs/errors.
+    """
     label = result.definition.average_label
     cur_avg = cur.commodity_average_text.get(commodity)
-    ref_avg = ref.commodity_average_text.get(commodity)
-    if label is None or not cur_avg:
-        return f"{commodity} - {cur.period}\n{ref.period}"
-    first = f"{commodity} {label} {cur_avg}"
-    second = f"{ref.period}: {label} {ref_avg}" if ref_avg else f"{ref.period}: -"
-    return f"{first}\n{second}"
+    if label is not None and cur_avg:
+        ref_avg = ref.commodity_average_text.get(commodity)
+        current_value = f"{label} {cur_avg}"
+        reference_value = f"{label} {ref_avg}" if ref_avg else "-"
+    else:
+        current_value = _total_text(cur.commodity_rows[commodity])
+        ref_rows = ref.commodity_rows.get(commodity)
+        reference_value = _total_text(ref_rows) if ref_rows else "-"
+    return [
+        [(f"{commodity} {current_value}", "first")],
+        [(f"{_week(ref.period, short=True)}: {reference_value}", "first")],
+    ]
 
 
 def describe_periods(current: ReportPeriod, reference: ReportPeriod) -> str:

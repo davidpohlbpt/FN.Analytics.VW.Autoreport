@@ -4,6 +4,7 @@ from pptcreator.creator.get_config import get_config_center_config as cc_module
 from pptcreator.creator.get_config.graph_get_config import graph_get_config
 from pptcreator.models.enum import Languages, TextAlignments
 from pptcreator.models.models import Mappings, Recipients, Templates
+from tests.unit.get_config.test_get_template_config import HEADLINE_FONT
 
 
 @pytest.fixture
@@ -391,11 +392,7 @@ def expected_config(filter_response):
                         "width_emu": 3150310,
                         "height_emu": 215444,
                     },
-                    "font": {
-                        "size_pt": 14.0,
-                        "is_bold": True,
-                        "h_align": TextAlignments.CENTER,
-                    },
+                    "font": HEADLINE_FONT,
                     "translation": "Supplier Readiness",
                 },
             },
@@ -454,11 +451,7 @@ def expected_config(filter_response):
                         "width_emu": 3635179,
                         "height_emu": 215444,
                     },
-                    "font": {
-                        "size_pt": 14.0,
-                        "is_bold": True,
-                        "h_align": TextAlignments.CENTER,
-                    },
+                    "font": HEADLINE_FONT,
                     "translation": "EDI Connection",
                 },
             },

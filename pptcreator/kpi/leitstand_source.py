@@ -132,9 +132,29 @@ class LeitstandKpiSource:
                 self._dates = [_as_date(r[0]) for r in con.execute(sql) if r[0] is not None]
         return self._dates
 
-    def resolve_date(self, period: ReportPeriod) -> dt.date:
-        start, end = period_bounds(period)
+    def latest_date(self) -> dt.date:
         dates = self.available_dates()
+        if not dates:
+            raise ValueError("T_RESULT_Leitstand_Overview has no snapshots.")
+        return dates[-1]
+
+    def previous_date(self, before: dt.date) -> dt.date:
+        earlier = [d for d in self.available_dates() if d < before]
+        if not earlier:
+            raise ValueError(f"No Control Center snapshot before {before}.")
+        return earlier[-1]
+
+    def resolve_date(self, period: ReportPeriod) -> dt.date:
+        dates = self.available_dates()
+        if period.date is not None:
+            if period.date in dates:
+                return period.date
+            before = [d for d in dates if d <= period.date]
+            if not before:
+                raise ValueError(f"No Control Center snapshot on or before {period.date}.")
+            logging.warning(f"No snapshot on {period.date}; using latest before: {before[-1]}")
+            return before[-1]
+        start, end = period_bounds(period)
         in_week = [d for d in dates if start <= d <= end]
         if in_week:
             return in_week[-1]
@@ -304,6 +324,8 @@ def _period_label(period: ReportPeriod, snapshot: dt.date) -> str:
     """Headline label; the actual snapshot week when it differs from the requested one."""
     year, week, _ = snapshot.isocalendar()
     actual = f"KW{week:02d}"
+    if period.date is not None:
+        return f"{actual}/{year}"
     requested = str(period).split("-")[-1]
     if actual == requested:
         return str(period)

@@ -9,6 +9,7 @@ distribution of the brand total and of each commodity. The renderer only needs
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 import re
 from typing import Protocol
 
@@ -58,23 +59,49 @@ class KpiDefinition:
 
 @dataclasses.dataclass(frozen=True)
 class ReportPeriod:
-    """A calendar week identifier such as ``KW37`` (optionally with year, ``2026-KW37``)."""
+    """A calendar week (``KW37``, ``2026-KW37``) or an exact snapshot date (``2025-11-18``).
+
+    Dates address one AnalyseZeitpunkt directly; weeks are resolved by the source.
+    """
 
     label: str
 
     @classmethod
-    def parse(cls, value: str | ReportPeriod) -> ReportPeriod:
+    def parse(cls, value: str | ReportPeriod | dt.date) -> ReportPeriod:
         if isinstance(value, ReportPeriod):
             return value
+        if isinstance(value, dt.date):
+            return cls(label=value.isoformat()[:10])
         text = str(value).strip()
         if not text:
             raise ValueError("Report period must not be empty.")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            try:
+                dt.date.fromisoformat(text)
+            except ValueError as exc:
+                raise ValueError(f"Invalid date {value!r}.") from exc
+            return cls(label=text)
         if not re.fullmatch(r"(\d{4}-)?KW\d{1,2}", text, flags=re.IGNORECASE):
             raise ValueError(
-                f"Unsupported period {value!r}; expected e.g. 'KW37' or '2026-KW37'."
+                f"Unsupported period {value!r}; expected e.g. 'KW37', '2026-KW37' or '2025-11-18'."
             )
         year, _, week = text.upper().rpartition("KW")
         return cls(label=f"{year}KW{int(week):02d}")
+
+    @property
+    def date(self) -> dt.date | None:
+        """The exact date for date periods, else None."""
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", self.label):
+            return dt.date.fromisoformat(self.label)
+        return None
+
+    @property
+    def display(self) -> str:
+        """Short label for headlines: 'KW47/2025' for dates, the label for weeks."""
+        if self.date is not None:
+            year, week, _ = self.date.isocalendar()
+            return f"KW{week:02d}/{year}"
+        return self.label
 
     def __str__(self) -> str:
         return self.label

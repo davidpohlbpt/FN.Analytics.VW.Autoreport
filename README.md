@@ -110,6 +110,20 @@ poetry run pytest
 poetry run pptcreator manual --brand Audi --reference KW37 --recipient you@example.com
 ```
 
+### Preview a deck from ReportDB (no AWS, no control tables)
+
+With the VPN tunnel up and `LOCAL_SQLSERVER_CONN_STR` in `.env`:
+
+```powershell
+poetry run python -m pptcreator.preview --brand "VW PKW" --current 2025-11-18 --reference previous --png
+```
+
+Reads the six Control Center KPIs live (read-only), renders with the VW template and
+writes `previews/<name>.pptx` (gitignored); `--png` also exports every slide as PNG via
+PowerPoint (needs `pywin32`, dev only). `--current latest` uses the newest snapshot,
+`--reference previous` the snapshot before the current one; dates and weeks
+(`2025-KW46`) work as well.
+
 With `S3_ENABLED=false` the template must exist in `<LOCAL_BLOB_DIR>/<storage_container>/`;
 with `MAIL_ENABLED=false` the deck is rendered but not sent. Rendered decks from the
 tests are written to `tests/result/` for visual inspection.

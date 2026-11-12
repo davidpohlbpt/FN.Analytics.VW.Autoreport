@@ -7,6 +7,7 @@ from pptcreator.creator.create_ppt.create_charts import parse_rgb
 from pptcreator.models.enum import ChartObjects, SlideObjects
 from pptcreator.utils.apply_font import apply_font
 from pptcreator.utils.get_chart_rows import get_chart_rows
+from pptcreator.utils.text_fit import fit_wrapped_size
 
 SWATCH = "\u25a0"
 _ENTRY_SPACING = "\u2003\u2003"
@@ -41,16 +42,23 @@ def create_legend(
     text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
     paragraph = text_frame.paragraphs[0]
 
-    # One paragraph lets PowerPoint lay out the row, so entries can never overlap
+    # One paragraph lets PowerPoint lay out the row, so entries can never overlap.
+    # Non-breaking spaces inside an entry keep swatch and label on the same line.
     for index, (category, color) in enumerate(entries):
         swatch = paragraph.add_run()
         swatch.text = SWATCH if index == 0 else f"{_ENTRY_SPACING}{SWATCH}"
         swatch.font.color.rgb = parse_rgb(color)
 
         label = paragraph.add_run()
-        label.text = f" {category}"
+        # nbsp + non-breaking hyphen: an entry never wraps internally ("UVB 2 - ...")
+        label.text = "\u00a0" + category.replace(" ", "\u00a0").replace("-", "\u2011")
 
-    apply_font(text_frame, legend_config.get("font"))
+    font = dict(legend_config.get("font") or {})
+    font.pop("color", None)  # the placeholder box is white-on-teal; labels stay default
+    font.pop("paragraph_styles", None)
+    chars = sum(len(category) + 5 for category, _ in entries)
+    font["size_pt"] = fit_wrapped_size(chars, position["width_emu"], font.get("size_pt") or 14, max_lines=2)
+    apply_font(text_frame, font)
 
     return prs
 

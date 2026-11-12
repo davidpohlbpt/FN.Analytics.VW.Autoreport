@@ -88,7 +88,7 @@ def add_donut_chart(
         if hole_size is None:
             hole_size = doughnut.makeelement(qn("c:holeSize"), {})
             doughnut.append(hole_size)
-        hole_size.set("val", str(_DONUT_HOLE_SIZE_PERCENT))
+        hole_size.set("val", str(chart_config.get("hole_size") or _DONUT_HOLE_SIZE_PERCENT))
 
     # Add legend
     chart.has_legend = has_legend
@@ -100,9 +100,14 @@ def add_donut_chart(
 
     # Change colors
     series = chart.plots[0].series[0]
+    border = chart_config.get("slice_border") or {}
     for point, category in zip(series.points, categories):
         point.format.fill.solid()
         point.format.fill.fore_color.rgb = parse_rgb(chart_fill_color[category])
+        if border.get("rgb"):
+            point.format.line.color.rgb = RGBColor.from_string(border["rgb"])
+            if border.get("width_emu"):
+                point.format.line.width = Emu(border["width_emu"])
 
     # Add data labels
     plot = chart.plots[0]

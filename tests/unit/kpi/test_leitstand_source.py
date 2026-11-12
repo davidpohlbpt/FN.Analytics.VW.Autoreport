@@ -104,6 +104,21 @@ def test_week_without_snapshot_uses_latest_before(engine):
         source.resolve_date(ReportPeriod.parse("2020-KW01"))
 
 
+def test_date_periods_and_previous(engine):
+    source = ls.LeitstandKpiSource(engine)
+    assert source.latest_date() == dt.date(2025, 11, 28)
+    assert source.previous_date(dt.date(2025, 11, 28)) == dt.date(2025, 9, 24)
+    assert source.resolve_date(ReportPeriod.parse("2025-11-28")) == dt.date(2025, 11, 28)
+    # a date without snapshot falls back to the latest before it
+    assert source.resolve_date(ReportPeriod.parse("2025-10-01")) == dt.date(2025, 9, 24)
+
+    result = source.fetch(DEFINITION, "Audi", ReportPeriod.parse("2025-11-28"), ReportPeriod.parse("2025-09-24"))
+    assert str(result.current.period) == "KW48/2025"
+    assert str(result.reference.period) == "KW39/2025"
+    with pytest.raises(ValueError, match="before"):
+        source.previous_date(dt.date(2025, 9, 24))
+
+
 def test_unknown_brand_raises(engine):
     source = ls.LeitstandKpiSource(engine)
     with pytest.raises(ValueError, match="no data for brand='Skoda'"):

@@ -1,4 +1,5 @@
 from pptx import presentation
+from pptx.enum.text import MSO_ANCHOR
 from pptx.slide import Slide
 from pptx.util import Emu
 
@@ -31,6 +32,7 @@ def create_totals(
             height=Emu(position["height_emu"]),
         )
         text_frame = textbox.text_frame
+        text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
         text_frame.text = _format_total(
             _sum_values(chart_data), config_dict.get("language")
         )

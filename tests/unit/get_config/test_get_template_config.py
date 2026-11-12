@@ -3,6 +3,20 @@ import pytest
 from pptcreator.creator.get_config.get_template_config import get_template_config
 from pptcreator.models.enum import Languages, TextAlignments
 
+HEADLINE_FONT = {
+    "size_pt": 14.0,
+    "is_bold": True,
+    "h_align": TextAlignments.CENTER,
+    "color": None,
+    "name": None,
+    "paragraph_styles": [
+        {
+            "first": {"size_pt": 14.0, "is_bold": True, "color": None, "name": None},
+            "rest": {"size_pt": 14.0, "is_bold": True, "color": None, "name": None},
+        }
+    ],
+}
+
 
 @pytest.fixture
 def exp_config():
@@ -40,11 +54,7 @@ def exp_config():
                         "width_emu": 3150310,
                         "height_emu": 215444,
                     },
-                    "font": {
-                        "size_pt": 14.0,
-                        "is_bold": True,
-                        "h_align": TextAlignments.CENTER,
-                    },
+                    "font": HEADLINE_FONT,
                 },
             },
             "Chart 4": {
@@ -79,11 +89,7 @@ def exp_config():
                         "width_emu": 3635179,
                         "height_emu": 215444,
                     },
-                    "font": {
-                        "size_pt": 14.0,
-                        "is_bold": True,
-                        "h_align": TextAlignments.CENTER,
-                    },
+                    "font": HEADLINE_FONT,
                 },
             },
         },

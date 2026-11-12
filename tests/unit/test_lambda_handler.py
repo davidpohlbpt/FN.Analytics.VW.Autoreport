@@ -1,4 +1,4 @@
-﻿"""End-to-end through the three Lambda handlers and the all-in-one handler.
+"""End-to-end through the three Lambda handlers and the all-in-one handler.
 
 Control tables in pycore's in-memory SQLite, template in moto S3, decks in moto S3,
 e-mails via moto SES, KPI data from the stub source. Writes decks to tests/result/.
@@ -117,11 +117,11 @@ def test_render_handler_end_to_end(stack):
     first = prs.slides[0]
     assert first.shapes.title.text == KPIS[0].title
     texts = [s.text_frame.text for s in first.shapes if s.has_text_frame]
-    assert any(t.startswith("KW37 - Audi") for t in texts)
-    assert any(t.startswith("KW45 - Audi") for t in texts)
+    assert any(t.startswith("KW37 – Audi") for t in texts)
+    assert any(t.startswith("KW45 – Audi") for t in texts)
     assert prs.slides[1].shapes.title.text == f"{KPIS[0].title} (1/2)"
-    assert len([s for s in prs.slides[1].shapes if s.has_chart]) == 7
-    assert len([s for s in prs.slides[2].shapes if s.has_chart]) == 3
+    assert len([s for s in prs.slides[1].shapes if s.has_chart]) == 5  # 10 commodities -> 5 + 5
+    assert len([s for s in prs.slides[2].shapes if s.has_chart]) == 5
 
     # No run-log row exists for "run-1" (planner did not run) -> update is a no-op, no error
     assert _runs().empty

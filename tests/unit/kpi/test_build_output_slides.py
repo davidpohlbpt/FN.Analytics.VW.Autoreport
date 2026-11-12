@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod
 from pptcreator.kpi.build_output_slides import (
@@ -44,8 +44,24 @@ def _result(commodities: list[str], avg: bool = True) -> KpiResult:
 def test_period_parsing():
     assert str(ReportPeriod.parse("kw5")) == "KW05"
     assert str(ReportPeriod.parse("2026-KW37")) == "2026-KW37"
+    date_period = ReportPeriod.parse("2025-11-18")
+    assert date_period.date.isoformat() == "2025-11-18"
+    assert date_period.display == "KW47/2025"
+    assert ReportPeriod.parse("KW37").date is None
     with pytest.raises(ValueError):
         ReportPeriod.parse("week 37")
+    with pytest.raises(ValueError):
+        ReportPeriod.parse("2025-13-40")
+
+
+def test_structured_headlines_for_template_styles():
+    slides = build_output_slides([_result(["BC"])], template_slots=TEMPLATE_SLOTS)
+    overview = slides[0]["charts"]["Chart 1"]["headline_lines"]
+    # line 1: week (template 'first' run = bold) + brand ('rest' run = regular)
+    assert overview[0] == [("KW37", "first"), (" \u2013 Audi", "rest")]
+    assert overview[1] == [("Ø 1 Jahr", "first")]
+    detail = slides[1]["charts"]["Chart 3"]["headline_lines"]
+    assert detail == [[("BC Ø 2 Monate", "first")], [("KW37: Ø 2 Monate", "first")]]
 
 
 def test_overview_slide_maps_reference_and_current():
@@ -53,8 +69,8 @@ def test_overview_slide_maps_reference_and_current():
     overview = slides[0]
     assert overview["template_slide"] == OVERVIEW_SLIDE
     assert overview["title"] == "Titel"
-    assert overview["charts"]["Chart 1"]["headline"] == "KW37 - Audi\nØ 1 Jahr"
-    assert overview["charts"]["Chart 2"]["headline"] == "KW45 - Audi\nØ 1 Jahr"
+    assert overview["charts"]["Chart 1"]["headline"] == "KW37 – Audi\nØ 1 Jahr"
+    assert overview["charts"]["Chart 2"]["headline"] == "KW45 – Audi\nØ 1 Jahr"
     assert overview["charts"]["Chart 1"]["filters"]["role"] == "reference"
     assert overview["charts"]["Chart 2"]["filters"]["role"] == "current"
 
@@ -66,10 +82,14 @@ def test_detail_slide_pagination():
     assert len(details) == 2
     assert details[0]["title"] == "Titel (1/2)"
     assert details[1]["title"] == "Titel (2/2)"
-    assert list(details[0]["charts"]) == TEMPLATE_SLOTS[1]
-    assert list(details[1]["charts"]) == ["Chart 3", "Chart 4", "Chart 5"]
-    assert details[1]["charts"]["Chart 3"]["filters"]["commodity"] == "C7"
+    # balanced: 10 commodities -> 5 + 5
+    assert list(details[0]["charts"]) == TEMPLATE_SLOTS[1][:5]
+    assert list(details[1]["charts"]) == TEMPLATE_SLOTS[1][:5]
+    assert details[1]["charts"]["Chart 3"]["filters"]["commodity"] == "C5"
     assert details[0]["charts"]["Chart 3"]["headline"] == "C0 Ø 2 Monate\nKW37: Ø 2 Monate"
+
+    eight = build_output_slides([_result([f"C{i}" for i in range(8)])], template_slots=TEMPLATE_SLOTS)
+    assert [len(s["charts"]) for s in eight if s["template_slide"] == DETAIL_SLIDE] == [4, 4]
 
 
 def test_detail_slide_without_pagination_keeps_plain_title():
@@ -87,8 +107,8 @@ def test_charts_per_detail_slide_override():
 
 def test_headline_without_average():
     slides = build_output_slides([_result(["BC"], avg=False)], template_slots=TEMPLATE_SLOTS)
-    assert slides[0]["charts"]["Chart 2"]["headline"] == "KW45 - Audi"
-    assert slides[1]["charts"]["Chart 3"]["headline"] == "BC - KW45\nKW37"
+    assert slides[0]["charts"]["Chart 2"]["headline"] == "KW45 – Audi"
+    assert slides[1]["charts"]["Chart 3"]["headline"] == "BC 3\nKW37: 3"
 
 
 def test_rows_are_in_palette_order():

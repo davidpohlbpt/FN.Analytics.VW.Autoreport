@@ -170,3 +170,7 @@ deployment/certs/*.pem
 # Local read-only DB exploration helpers
 scratch/
 
+
+# Local preview decks (python -m pptcreator.preview)
+previews/
+
