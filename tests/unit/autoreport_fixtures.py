@@ -7,6 +7,7 @@ import pytest
 
 from pptcreator.kpi.registry import as_mapping_rows
 from pptcreator.models.models import (
+    AutoreportBrands,
     AutoreportMappings,
     AutoreportRecipients,
     AutoreportTemplates,
@@ -25,7 +26,6 @@ def template_rows(template_link: str, target_location: str | None = None) -> lis
             "language": "DE",
             "target_file_name": "VW_KPI_Report_{brand}_{current}_vs_{reference}",
             "target_location": target_location,
-            "default_reference_weeks_back": 8,
             "commodity_charts_per_slide": None,
             "email_subject": "VW KPI Report {brand}: {current} vs. {reference}",
             "is_active": True,
@@ -33,15 +33,36 @@ def template_rows(template_link: str, target_location: str | None = None) -> lis
     ]
 
 
+AUDI, SEAT, SKODA, PORSCHE = 1, 2, 3, 4
+
+
+def brand_rows() -> list[dict]:
+    return [
+        {"id": AUDI, "brand_name": "Audi AG", "filter_value": "Audi", "is_active": True},
+        {"id": SEAT, "brand_name": "SEAT", "filter_value": "Seat", "is_active": True},
+        {"id": SKODA, "brand_name": "Skoda", "filter_value": "Skoda", "is_active": True},
+        {"id": PORSCHE, "brand_name": "Porsche", "filter_value": "Porsche", "is_active": False},
+    ]
+
+
 def recipient_rows() -> list[dict]:
     now = dt.datetime(2026, 11, 11, 12, 0, 0)
+
+    def row(id_, email, brand_id, year, week, send_now=False, active=True):
+        return {
+            "id": id_, "template_id": TEMPLATE_ID, "email": email, "brand_id": brand_id,
+            "reference_year": year, "reference_week": week, "send_now": send_now,
+            "is_active": active, "last_edited_at": now,
+        }
+
     return [
-        {"id": 1, "template_id": TEMPLATE_ID, "email": "a@x.de", "brand": "Audi", "reference_timestamp": "KW37", "send_now": False, "is_active": True, "last_edited_at": now},
-        {"id": 2, "template_id": TEMPLATE_ID, "email": "b@x.de", "brand": "Audi", "reference_timestamp": "KW37", "send_now": True, "is_active": True, "last_edited_at": now},
-        {"id": 3, "template_id": TEMPLATE_ID, "email": "c@x.de", "brand": "Seat", "reference_timestamp": None, "send_now": False, "is_active": True, "last_edited_at": now},
-        {"id": 4, "template_id": TEMPLATE_ID, "email": "d@x.de", "brand": "Seat", "reference_timestamp": "KW30", "send_now": True, "is_active": False, "last_edited_at": now},
-        {"id": 5, "template_id": TEMPLATE_ID, "email": "", "brand": "Skoda", "reference_timestamp": "KW30", "send_now": False, "is_active": True, "last_edited_at": now},
-        {"id": 6, "template_id": TEMPLATE_ID, "email": "A@x.de", "brand": "Audi", "reference_timestamp": "kw37", "send_now": False, "is_active": True, "last_edited_at": now},
+        row(1, "a@x.de", AUDI, 2026, 37),
+        row(2, "b@x.de", AUDI, 2026, 37, send_now=True),
+        row(3, "c@x.de", SEAT, 2026, 40),
+        row(4, "d@x.de", SEAT, 2026, 30, send_now=True, active=False),  # inactive row
+        row(5, "", SKODA, 2026, 30),                                    # missing email
+        row(6, "A@x.de", AUDI, 2025, 37),                               # other week, same brand
+        row(7, "e@x.de", PORSCHE, 2026, 37),                            # inactive brand
     ]
 
 
@@ -53,6 +74,7 @@ def seed_control_tables(data_repo):
         data_repo.database.create_all_tables()
         data_repo.write_table(model=AutoreportTemplates, df=pd.DataFrame(template_rows(template_link, target_location)))
         data_repo.write_table(model=AutoreportMappings, df=pd.DataFrame(as_mapping_rows(TEMPLATE_ID, source=source)))
+        data_repo.write_table(model=AutoreportBrands, df=pd.DataFrame(brand_rows()))
         if recipients:
             data_repo.write_table(model=AutoreportRecipients, df=pd.DataFrame(recipient_rows()))
         return TEMPLATE_ID

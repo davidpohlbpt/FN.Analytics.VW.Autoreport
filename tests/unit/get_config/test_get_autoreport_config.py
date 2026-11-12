@@ -9,6 +9,7 @@ from pptcreator.creator.get_config.get_autoreport_config import (
     get_template_config,
     group_recipients,
     read_recipients,
+    reference_period_of,
 )
 from pptcreator.kpi.base import ReportPeriod
 from pptcreator.models.models import AutoreportMappings, AutoreportTemplates
@@ -109,13 +110,60 @@ def test_source_override(seed_control_tables, monkeypatch):  # noqa: F811
 def test_recipient_grouping(seed_control_tables):  # noqa: F811
     seed_control_tables("VW.pptx")
 
-    groups = group_recipients(read_recipients(TEMPLATE_ID), TEMPLATE_ID)
-    by_key = {(g.brand, str(g.reference_period) if g.reference_period else None): g for g in groups}
+    recipients = read_recipients(TEMPLATE_ID)
+    assert 7 not in set(recipients["id"])  # inactive brand dropped
+    assert 4 not in set(recipients["id"])  # inactive recipient dropped
 
-    assert set(by_key) == {("Audi", "KW37"), ("Seat", None)}
-    assert by_key[("Audi", "KW37")].emails == ["a@x.de", "b@x.de"]  # A@x.de deduplicated
-    assert by_key[("Audi", "KW37")].recipient_ids == [1, 2, 6]
-    assert by_key[("Seat", None)].emails == ["c@x.de"]
+    groups = group_recipients(recipients, TEMPLATE_ID)
+    by_key = {(g.brand, str(g.reference_period)): g for g in groups}
+
+    # brand = filter_value of the brand table; same brand, two weeks -> two decks
+    assert set(by_key) == {("Audi", "2026-KW37"), ("Audi", "2025-KW37"), ("Seat", "2026-KW40")}
+    assert by_key[("Audi", "2026-KW37")].emails == ["a@x.de", "b@x.de"]
+    assert by_key[("Audi", "2026-KW37")].recipient_ids == [1, 2]
+    assert by_key[("Audi", "2025-KW37")].emails == ["A@x.de"]
+    assert by_key[("Seat", "2026-KW40")].emails == ["c@x.de"]
 
     adhoc = group_recipients(read_recipients(TEMPLATE_ID, only_send_now=True), TEMPLATE_ID)
     assert [(g.brand, g.emails, g.recipient_ids) for g in adhoc] == [("Audi", ["b@x.de"], [2])]
+
+
+def test_recipients_with_duplicate_email_merged():
+    rows = pd.DataFrame(
+        [
+            {"id": 1, "email": "a@x.de", "brand": "Audi", "reference_year": 2026, "reference_week": 1},
+            {"id": 2, "email": "A@X.de", "brand": "Audi", "reference_year": 2026, "reference_week": 1},
+        ]
+    )
+    [group] = group_recipients(rows, TEMPLATE_ID)
+    assert group.emails == ["a@x.de"] and group.recipient_ids == [1, 2]
+
+
+@pytest.mark.parametrize(
+    ("year", "week", "message"),
+    [
+        (None, 37, "mandatory"),
+        (2026, None, "mandatory"),
+        (2026, 54, "invalid reference week"),
+        (2025, 53, "invalid reference week"),  # 2025 has only 52 ISO weeks
+    ],
+)
+def test_reference_week_is_mandatory_and_valid(year, week, message):
+    with pytest.raises(ValueError, match=message):
+        reference_period_of({"reference_year": year, "reference_week": week})
+
+
+def test_rows_without_reference_week_are_skipped():
+    rows = pd.DataFrame(
+        [
+            {"id": 1, "email": "a@x.de", "brand": "Audi", "reference_year": 2026, "reference_week": None},
+            {"id": 2, "email": "b@x.de", "brand": "Audi", "reference_year": 2026, "reference_week": 2},
+        ]
+    )
+    groups = group_recipients(rows, TEMPLATE_ID)
+    assert [(g.emails, str(g.reference_period)) for g in groups] == [(["b@x.de"], "2026-KW02")]
+
+
+def test_reference_period_of_valid():
+    assert str(reference_period_of({"reference_year": 2026, "reference_week": 1})) == "2026-KW01"
+    assert str(reference_period_of({"reference_year": 2020, "reference_week": 53})) == "2020-KW53"

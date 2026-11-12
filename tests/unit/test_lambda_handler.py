@@ -1,4 +1,4 @@
-"""End-to-end through the three Lambda handlers and the all-in-one handler.
+﻿"""End-to-end through the three Lambda handlers and the all-in-one handler.
 
 Control tables in pycore's in-memory SQLite, template in moto S3, decks in moto S3,
 e-mails via moto SES, KPI data from the stub source. Writes decks to tests/result/.
@@ -13,10 +13,7 @@ from pptx import Presentation
 
 from pptcreator import lambda_handler
 from pptcreator.config import settings
-from pptcreator.creator.graph_steer_creation_process import (
-    current_calendar_week,
-    default_reference_week,
-)
+from pptcreator.creator.graph_steer_creation_process import current_calendar_week
 from pptcreator.kpi.registry import KPIS
 from pptcreator.models.models import AutoreportRecipients, AutoreportRuns
 from pptcreator.utils.read_data import read_data
@@ -54,24 +51,24 @@ def _runs() -> pd.DataFrame:
 
 def test_plan_scheduled(stack):
     out = lambda_handler.plan_handler(
-        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "KW45", "reference_period": "KW40"}, None
+        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None
     )
 
-    assert out["count"] == 2
-    by_brand = {r["brand"]: r for r in out["requests"]}
-    assert by_brand["Audi"]["reference_period"] == "KW37"
-    assert by_brand["Audi"]["recipients"] == ["a@x.de", "b@x.de"]
-    assert by_brand["Seat"]["reference_period"] == "KW40"  # template default from event
+    assert out["count"] == 3
+    by_key = {(r["brand"], r["reference_period"]): r for r in out["requests"]}
+    assert by_key[("Audi", "2026-KW37")]["recipients"] == ["a@x.de", "b@x.de"]
+    assert by_key[("Audi", "2025-KW37")]["recipients"] == ["A@x.de"]  # same brand, other week
+    assert by_key[("Seat", "2026-KW40")]["recipients"] == ["c@x.de"]
     assert all(r["run_id"] == out["run_id"] and r["trigger"] == "scheduled" for r in out["requests"])
 
     runs = _runs()
-    assert len(runs) == 2 and set(runs["status"]) == {"queued"}
+    assert len(runs) == 3 and set(runs["status"]) == {"queued"}
     # scheduled run must not touch send_now
     assert read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
 
 
 def test_plan_adhoc_clears_send_now(stack):
-    out = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID, "current_period": "KW45"}, None)
+    out = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None)
 
     assert out["count"] == 1
     assert out["requests"][0]["recipients"] == ["b@x.de"]
@@ -200,19 +197,20 @@ def test_send_handler_failed_render_is_skipped(stack):
 
 
 def test_state_machine_round_trip(stack):
-    plan = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "KW45"}, None)
+    plan = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None)
 
     sent = []
     for request in plan["requests"]:
         render = lambda_handler.render_handler(request, None)
         sent.append(lambda_handler.send_handler(render, None))
 
-    assert [s["status"] for s in sent] == ["sent", "sent"]
-    runs = _runs().set_index("brand")
+    assert [s["status"] for s in sent] == ["sent", "sent", "sent"]
+    runs = _runs().set_index(["brand", "reference_period"])
     assert set(runs["status"]) == {"sent"}
-    assert runs.loc["Audi", "s3_key"].endswith("VW_KPI_Report_Audi_KW45_vs_KW37.pptx")
-    assert runs.loc["Seat", "message_id"]
-    assert stack["ses"].get_send_quota()["SentLast24Hours"] == 3  # 2 Audi + 1 Seat
+    assert runs.loc[("Audi", "2026-KW37"), "s3_key"].endswith("VW_KPI_Report_Audi_2026-KW45_vs_2026-KW37.pptx")
+    assert runs.loc[("Audi", "2025-KW37"), "s3_key"].endswith("VW_KPI_Report_Audi_2026-KW45_vs_2025-KW37.pptx")
+    assert runs.loc[("Seat", "2026-KW40"), "message_id"]
+    assert stack["ses"].get_send_quota()["SentLast24Hours"] == 4  # 2 + 1 Audi, 1 Seat
 
 
 # ------------------------------------------------------------------------------ #
@@ -230,8 +228,8 @@ def test_all_in_one_manual(stack):
 
 
 def test_all_in_one_scheduled(stack):
-    summary = lambda_handler.run({"mode": "scheduled", "template_id": TEMPLATE_ID, "current_period": "KW45"})
-    assert summary["decks"] == 2 and summary["sent"] == 2
+    summary = lambda_handler.run({"mode": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"})
+    assert summary["decks"] == 3 and summary["sent"] == 3
 
 
 def test_all_in_one_errors():
@@ -243,4 +241,3 @@ def test_all_in_one_errors():
 
 def test_week_helpers():
     assert current_calendar_week(dt.date(2026, 11, 11)) == "2026-KW46"
-    assert default_reference_week(dt.date(2026, 11, 11), weeks_back=8) == "2026-KW38"

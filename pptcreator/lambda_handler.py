@@ -4,7 +4,8 @@ Three handlers, one per Lambda of the state machine (see deployment/state_machin
 
 ``plan_handler``  (Lambda 1, EventBridge every N minutes and weekly)
     in:  {"trigger": "adhoc" | "scheduled", "template_id": 1,
-          "current_period": "2026-KW45", "reference_period": "2026-KW37"}   (periods optional)
+          "current_period": "2026-KW45"}   (current_period optional)
+    The reference week always comes from the recipient row (mandatory there).
     out: {"run_id": "...", "requests": [ReportRequest, ...]}
     Side effects: run log rows with status 'queued'; send_now cleared for ad hoc rows.
 
@@ -80,7 +81,6 @@ def plan_handler(event, context):
         trigger=trigger,
         template_id=event.get("template_id"),
         current_period=event.get("current_period"),
-        default_reference_period=event.get("reference_period"),
         run_id=event.get("run_id"),
     )
     run_log.log_queued(requests)
@@ -180,7 +180,6 @@ def run(event: dict | None, source: KpiSource | None = None) -> dict:
             trigger=mode,
             template_id=event.get("template_id"),
             current_period=event.get("current_period"),
-            default_reference_period=event.get("reference_period"),
         )
 
     return _summary(mode, outcomes)

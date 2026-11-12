@@ -139,20 +139,16 @@ def plan_decks(
     trigger: str,
     template_id: int | None = None,
     current_period: str | ReportPeriod | None = None,
-    default_reference_period: str | ReportPeriod | None = None,
     run_id: str | None = None,
 ) -> list[ReportRequest]:
     """Read the recipient table and build one ReportRequest per (brand, reference period).
 
+    Every recipient row carries its own (mandatory) reference week; there is no default.
     ``trigger='adhoc'`` only picks rows with ``send_now = 1``. The flag is NOT cleared
     here; the caller (planner Lambda) does that once the requests were handed over.
     """
     template = get_template_config(template_id)
     current = ReportPeriod.parse(current_period or current_calendar_week())
-    default_reference = ReportPeriod.parse(
-        default_reference_period
-        or default_reference_week(weeks_back=template.default_reference_weeks_back)
-    )
     run_id = run_id or str(uuid.uuid4())
 
     recipients = read_recipients(template.id, only_send_now=(trigger == "adhoc"))
@@ -161,7 +157,7 @@ def plan_decks(
 
     requests: list[ReportRequest] = []
     for group in groups:
-        reference = group.reference_period or default_reference
+        reference = group.reference_period
         try:
             requests.append(
                 ReportRequest.create(
@@ -383,13 +379,11 @@ def steer_scheduled_kpi_decks(
     trigger: str = "scheduled",
     template_id: int | None = None,
     current_period: str | ReportPeriod | None = None,
-    default_reference_period: str | ReportPeriod | None = None,
 ) -> list[DeckOutcome]:
     requests = plan_decks(
         trigger=trigger,
         template_id=template_id,
         current_period=current_period,
-        default_reference_period=default_reference_period,
     )
     if not requests:
         return []
@@ -408,20 +402,12 @@ def current_calendar_week(today: dt.date | None = None) -> str:
     return f"{year}-KW{week:02d}"
 
 
-def default_reference_week(today: dt.date | None = None, weeks_back: int = 8) -> str:
-    today = today or dt.date.today()
-    reference = today - dt.timedelta(weeks=weeks_back)
-    year, week, _ = reference.isocalendar()
-    return f"{year}-KW{week:02d}"
-
-
 __all__ = [
     "DeckOutcome",
     "RecipientGroup",
     "RenderResult",
     "SendResult",
     "current_calendar_week",
-    "default_reference_week",
     "graph_steer_creation_process",
     "plan_decks",
     "render_deck",

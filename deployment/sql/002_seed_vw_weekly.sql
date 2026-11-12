@@ -7,14 +7,13 @@
 DECLARE @template_id INT;
 
 INSERT INTO control.T_Control_Autoreport_Templates
-    (name, template_link, language, target_file_name, target_location, default_reference_weeks_back, email_subject, is_active)
+    (name, template_link, language, target_file_name, target_location, email_subject, is_active)
 VALUES
     (N'IDM Control Center Weekly',
      N's3://<bucket>/templates/VW_Template_Overview.pptx',
      N'DE',
      N'IDM_Control_Center_{brand}_{current}_vs_{reference}',
      N's3://<bucket>/reports',
-     8,
      N'IDM Control Center {brand}: {current} vs. {reference}',
      1);
 SET @template_id = SCOPE_IDENTITY();
@@ -42,10 +41,24 @@ VALUES
      N'Wie viele unterschiedliche Kapazitätseinträge haben die BKAs?',
      N'leitstand', 1200, 1200, 120017, 120017, NULL, NULL);
 
--- Example recipients; brand = EK_ORG value in T_RESULT_Leitstand_Overview
--- (e.g. 'VW PKW', 'Audi', 'Audi Hungaria', 'SEAT', 'Skoda', 'Porsche', 'MAN', ...)
-INSERT INTO control.T_Control_Autoreport_Recipients (template_id, email, brand, reference_timestamp, send_now, is_active, last_edited_at)
+-- Brands: filter_value = EK_ORG value in dbo.T_RESULT_Leitstand_Overview.
+-- Check the list with: SELECT DISTINCT EK_ORG FROM dbo.T_RESULT_Leitstand_Overview
+INSERT INTO control.T_Control_Autoreport_Brands (brand_name, filter_value, is_active)
 VALUES
-    (@template_id, N'you@example.com', N'VW PKW', N'KW39', 0, 1, SYSUTCDATETIME()),
-    (@template_id, N'you@example.com', N'Audi',   NULL,    0, 1, SYSUTCDATETIME());
+    (N'Volkswagen PKW', N'VW PKW',        1),
+    (N'Audi',           N'Audi',          1),
+    (N'Audi Hungaria',  N'Audi Hungaria', 1),
+    (N'SEAT',           N'SEAT',          1),
+    (N'Skoda',          N'Skoda',         1),
+    (N'Porsche',        N'Porsche',       1),
+    (N'MAN',            N'MAN',           1);
+
+-- Example recipients; the reference week is mandatory. Week 1 of the current year is
+-- the suggested frontend default; the test system only has data up to 2025-11-28,
+-- so the examples use 2025 weeks.
+INSERT INTO control.T_Control_Autoreport_Recipients
+    (template_id, email, brand_id, reference_year, reference_week, send_now, is_active, last_edited_at)
+SELECT @template_id, N'you@example.com', b.id, r.y, r.w, 0, 1, SYSUTCDATETIME()
+FROM (VALUES (N'VW PKW', 2025, 39), (N'VW PKW', 2025, 30), (N'Audi', 2025, 40)) AS r(brand, y, w)
+JOIN control.T_Control_Autoreport_Brands b ON b.filter_value = r.brand;
 GO

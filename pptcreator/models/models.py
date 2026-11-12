@@ -111,7 +111,9 @@ class Recipients(DeclarativeBase):
 #   T_Control_Autoreport_Templates   what a report is: template file, language, KPIs
 #   T_Control_Autoreport_Mappings    one row per KPI of a template: where its data
 #                                    comes from (frontend chart or backend query)
-#   T_Control_Autoreport_Recipients  who gets which brand with which reference week
+#   T_Control_Autoreport_Brands      master list of brands (frontend dropdown)
+#   T_Control_Autoreport_Recipients  one row per deck a user wants: template, brand,
+#                                    reference week (mandatory)
 #   T_Control_Autoreport_Runs        audit log written by the Lambdas / state machine
 # ------------------------------------------------------------------------------ #
 
@@ -139,9 +141,6 @@ class AutoreportTemplates(DeclarativeBase):
 
     target_location: Mapped[str | None] = mapped_column(sa.String(1000))
     """Where rendered decks go: 's3://bucket/prefix' or a storage container; None -> default"""
-
-    default_reference_weeks_back: Mapped[int | None] = mapped_column(default=8)
-    """Reference period used when a recipient does not set one (weeks before current)"""
 
     commodity_charts_per_slide: Mapped[int | None] = mapped_column(default=None)
     """Detail charts per slide; None -> all chart slots found on the template slide"""
@@ -197,11 +196,39 @@ class AutoreportMappings(DeclarativeBase):
     is_active: Mapped[bool] = mapped_column(default=True)
 
 
+class AutoreportBrands(DeclarativeBase):
+    """Master list of brands; feeds the frontend dropdown."""
+
+    __tablename__ = "T_Control_Autoreport_Brands"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    brand_name: Mapped[str] = mapped_column(sa.String(200))
+    """Display name in the frontend, e.g. 'Volkswagen PKW'"""
+
+    filter_value: Mapped[str] = mapped_column(sa.String(200))
+    """Exact value in the data (EK_ORG in T_RESULT_Leitstand_Overview), e.g. 'VW PKW'"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
 class AutoreportRecipients(DeclarativeBase):
-    """Recipient list ("Empfängerliste" maintained in the DQN frontend)."""
+    """One row per deck a user wants: template + brand + reference week.
+
+    The same e-mail may appear several times for the same template and brand with
+    different reference weeks; each row yields its own deck (identical ones are merged).
+    """
 
     __tablename__ = "T_Control_Autoreport_Recipients"
-    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "email", "template_id", "brand_id", "reference_year", "reference_week",
+            name="UQ_Autoreport_Recipients",
+        ),
+        sa.CheckConstraint("reference_week BETWEEN 1 AND 53", name="CK_Autoreport_Recipients_Week"),
+        {"schema": AUTOREPORT_SCHEMA, "extend_existing": True},
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
@@ -211,11 +238,15 @@ class AutoreportRecipients(DeclarativeBase):
 
     email: Mapped[str] = mapped_column(sa.String(500))
 
-    brand: Mapped[str] = mapped_column(sa.String(200))
-    """Brand the recipient wants to receive, e.g. 'Audi'"""
+    brand_id: Mapped[int] = mapped_column(
+        sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Brands.id")
+    )
 
-    reference_timestamp: Mapped[str | None] = mapped_column(sa.String(50))
-    """Reference period, e.g. 'KW37' or '2026-KW37'; NULL -> template default"""
+    reference_year: Mapped[int]
+    """ISO year of the reference week (mandatory)"""
+
+    reference_week: Mapped[int]
+    """ISO week 1-53 of the reference week (mandatory)"""
 
     send_now: Mapped[bool | None] = mapped_column(default=False)
     """Ad hoc request flag set by the frontend; cleared by the planner when picked up"""

@@ -54,9 +54,10 @@ DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `default_reference_weeks_back`, `email_subject` |
+| `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `email_subject` |
 | `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` |
-| `T_Control_Autoreport_Recipients` | who gets what | `template_id`, `email`, `brand`, `reference_timestamp` (`KW37`, NULL = template default), `send_now`, `is_active` |
+| `T_Control_Autoreport_Brands` | brand master list (frontend dropdown) | `brand_name` (display), `filter_value` (`EK_ORG` value), `is_active` |
+| `T_Control_Autoreport_Recipients` | one row per deck a user wants | `template_id`, `email`, `brand_id` (FK Brands), `reference_year` + `reference_week` (ISO, **mandatory**, no default), `send_now`, `is_active`; unique per (email, template, brand, reference week). Same brand with several weeks = several decks; rows with identical (template, brand, week) share one deck |
 | `T_Control_Autoreport_Runs` | audit log | `run_id`, `brand`, periods, `status` (`queued`/`rendered`/`sent`/`failed`), `s3_key`, `message_id`, `error` |
 
 Data sources per KPI:

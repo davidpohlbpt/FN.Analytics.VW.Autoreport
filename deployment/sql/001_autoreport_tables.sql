@@ -1,5 +1,6 @@
-﻿-- Control tables for the VW Autoreport (ReportDB). SQL Server syntax.
--- Mirrors pptcreator/models/models.py (AutoreportTemplates / Mappings / Recipients / Runs).
+-- Control tables for the VW Autoreport (ReportDB). SQL Server syntax.
+-- Mirrors pptcreator/models/models.py (AutoreportTemplates / Mappings / Brands / Recipients / Runs).
+-- The legacy T_CONTROL_PptCreator_* tables are not touched.
 
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'control')
     EXEC('CREATE SCHEMA control');
@@ -13,7 +14,6 @@ CREATE TABLE control.T_Control_Autoreport_Templates (
     language                     NVARCHAR(2)    NOT NULL CONSTRAINT CK_Autoreport_Templates_Lang CHECK (language IN ('DE','EN')),
     target_file_name             NVARCHAR(500)  NOT NULL,   -- pattern with {brand} {current} {reference}
     target_location              NVARCHAR(1000) NULL,       -- s3://bucket/prefix ; NULL -> Lambda default bucket/prefix
-    default_reference_weeks_back INT            NULL CONSTRAINT DF_Autoreport_Templates_RefWeeks DEFAULT 8,
     commodity_charts_per_slide   INT            NULL,       -- NULL -> all chart slots on template slide 2
     email_subject                NVARCHAR(500)  NULL,       -- pattern with {brand} {current} {reference}
     is_active                    BIT            NOT NULL CONSTRAINT DF_Autoreport_Templates_Active DEFAULT 1
@@ -42,16 +42,30 @@ CREATE TABLE control.T_Control_Autoreport_Mappings (
 );
 GO
 
+IF OBJECT_ID('control.T_Control_Autoreport_Brands', 'U') IS NULL
+CREATE TABLE control.T_Control_Autoreport_Brands (
+    id           INT IDENTITY(1,1) PRIMARY KEY,
+    brand_name   NVARCHAR(200) NOT NULL,   -- shown in the frontend dropdown
+    filter_value NVARCHAR(200) NOT NULL,   -- exact EK_ORG value in dbo.T_RESULT_Leitstand_Overview
+    is_active    BIT           NOT NULL CONSTRAINT DF_Autoreport_Brands_Active DEFAULT 1,
+    CONSTRAINT UQ_Autoreport_Brands_Filter UNIQUE (filter_value)
+);
+GO
+
+-- One row per deck a user wants. The same email/template/brand may appear several
+-- times with different reference weeks. The reference week is mandatory.
 IF OBJECT_ID('control.T_Control_Autoreport_Recipients', 'U') IS NULL
 CREATE TABLE control.T_Control_Autoreport_Recipients (
-    id                  INT IDENTITY(1,1) PRIMARY KEY,
-    template_id         INT           NOT NULL REFERENCES control.T_Control_Autoreport_Templates(id),
-    email               NVARCHAR(500) NOT NULL,
-    brand               NVARCHAR(200) NOT NULL,
-    reference_timestamp NVARCHAR(50)  NULL,      -- 'KW37' or '2026-KW37'; NULL -> template default
-    send_now            BIT           NULL CONSTRAINT DF_Autoreport_Recipients_SendNow DEFAULT 0,
-    is_active           BIT           NULL CONSTRAINT DF_Autoreport_Recipients_Active DEFAULT 1,
-    last_edited_at      DATETIME2     NULL
+    id             INT IDENTITY(1,1) PRIMARY KEY,
+    template_id    INT           NOT NULL REFERENCES control.T_Control_Autoreport_Templates(id),
+    email          NVARCHAR(500) NOT NULL,
+    brand_id       INT           NOT NULL REFERENCES control.T_Control_Autoreport_Brands(id),
+    reference_year INT           NOT NULL,   -- ISO year
+    reference_week INT           NOT NULL CONSTRAINT CK_Autoreport_Recipients_Week CHECK (reference_week BETWEEN 1 AND 53),
+    send_now       BIT           NULL CONSTRAINT DF_Autoreport_Recipients_SendNow DEFAULT 0,
+    is_active      BIT           NULL CONSTRAINT DF_Autoreport_Recipients_Active DEFAULT 1,
+    last_edited_at DATETIME2     NULL,
+    CONSTRAINT UQ_Autoreport_Recipients UNIQUE (email, template_id, brand_id, reference_year, reference_week)
 );
 GO
 

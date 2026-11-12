@@ -9,6 +9,7 @@ is independent of the storage layout of ReportDB.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 import json
 import logging
 from urllib.parse import urlparse
@@ -19,6 +20,7 @@ from pptcreator.config import settings
 from pptcreator.kpi.base import KpiDefinition, ReportPeriod
 from pptcreator.models.enum import Languages
 from pptcreator.models.models import (
+    AutoreportBrands,
     AutoreportMappings,
     AutoreportRecipients,
     AutoreportTemplates,
@@ -69,7 +71,6 @@ class TemplateConfig:
     language: Languages
     target_file_name: str
     target: StorageLocation | None
-    default_reference_weeks_back: int
     commodity_charts_per_slide: int | None
     email_subject: str | None
     kpis: list[KpiDefinition]
@@ -117,7 +118,6 @@ def get_template_config(template_id: int | None = None) -> TemplateConfig:
             if target_link
             else None
         ),
-        default_reference_weeks_back=int(_num_or(template_row.get("default_reference_weeks_back"), 8)),
         commodity_charts_per_slide=(
             int(v) if (v := _num_or(template_row.get("commodity_charts_per_slide"), None)) else None
         ),
@@ -210,39 +210,72 @@ def _parse_palette(raw, mapping_id) -> dict[str, str]:
 class RecipientGroup:
     template_id: int
     brand: str
-    reference_period: ReportPeriod | None
-    """None -> template default"""
+    """Brand filter value (EK_ORG), used for the data query, file name and headlines"""
+    reference_period: ReportPeriod
     emails: list[str]
     recipient_ids: list[int]
 
 
+RECIPIENT_COLUMNS = [
+    "id", "template_id", "email", "brand_id", "reference_year", "reference_week", "send_now", "brand",
+]
+
+
 def read_recipients(template_id: int, *, only_send_now: bool = False) -> pd.DataFrame:
+    """Active recipient rows of a template joined with their active brand.
+
+    Adds a ``brand`` column holding the brand's ``filter_value``. Rows whose brand is
+    unknown or inactive are dropped with a warning.
+    """
     columns, values = ["template_id", "is_active"], [template_id, True]
     if only_send_now:
         columns.append("send_now")
         values.append(True)
     data = read_data(AutoreportRecipients, columns, values)
     if data is None or data.empty:
-        return pd.DataFrame(columns=["id", "template_id", "email", "brand", "reference_timestamp", "send_now"])
-    return data
+        return pd.DataFrame(columns=RECIPIENT_COLUMNS)
+
+    brands = read_data(AutoreportBrands, ["is_active"], [True])
+    if brands is None or brands.empty:
+        logging.warning("No active brands in T_Control_Autoreport_Brands; all recipients skipped.")
+        return pd.DataFrame(columns=RECIPIENT_COLUMNS)
+    brand_by_id = {int(r["id"]): _str_or_none(r["filter_value"]) for r in brands.to_dict("records")}
+
+    data = data.copy()
+    data["brand"] = [brand_by_id.get(_int_or_none(b)) for b in data["brand_id"]]
+    unknown = data[data["brand"].isna()]
+    for row in unknown.to_dict("records"):
+        logging.warning(f"Recipient {row.get('id')} skipped: brand_id {row.get('brand_id')} unknown or inactive.")
+    return data[data["brand"].notna()]
+
+
+def reference_period_of(row: dict) -> ReportPeriod:
+    """ISO year + week of a recipient row -> ReportPeriod. Both are mandatory."""
+    year, week = _int_or_none(row.get("reference_year")), _int_or_none(row.get("reference_week"))
+    if year is None or week is None:
+        raise ValueError("reference week is mandatory (reference_year and reference_week).")
+    try:
+        dt.date.fromisocalendar(year, week, 1)
+    except ValueError as exc:
+        raise ValueError(f"invalid reference week {year}-KW{week:02d} ({exc}).") from exc
+    return ReportPeriod.parse(f"{year}-KW{week:02d}")
 
 
 def group_recipients(recipients: pd.DataFrame, template_id: int) -> list[RecipientGroup]:
     """One group per (brand, reference period). Rows with bad data are skipped with a warning."""
-    groups: dict[tuple[str, str | None], RecipientGroup] = {}
+    groups: dict[tuple[str, str], RecipientGroup] = {}
     for row in recipients.to_dict("records"):
         email = _str_or_none(row.get("email"))
         brand = _str_or_none(row.get("brand"))
         if not email or not brand:
             logging.warning(f"Recipient {row.get('id')} skipped: missing email or brand.")
             continue
-        raw_ref = _str_or_none(row.get("reference_timestamp"))
         try:
-            reference = ReportPeriod.parse(raw_ref) if raw_ref else None
+            reference = reference_period_of(row)
         except ValueError as exc:
             logging.warning(f"Recipient {row.get('id')} skipped: {exc}")
             continue
-        key = (brand, str(reference) if reference else None)
+        key = (brand, str(reference))
         group = groups.setdefault(
             key, RecipientGroup(template_id, brand, reference, [], [])
         )
