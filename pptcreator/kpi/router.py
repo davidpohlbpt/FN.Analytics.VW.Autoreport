@@ -8,7 +8,7 @@ from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSource, ReportPerio
 
 
 class RoutingKpiSource:
-    """Delegates ``fetch`` to the source named in the definition (frontend/backend/stub).
+    """Delegates ``fetch`` to the source named in the definition (leitstand/frontend/backend/stub).
 
     Sources are created lazily so that e.g. a deck with only backend KPIs never logs in
     to the DQN API.
@@ -47,4 +47,8 @@ def _create(name: str) -> KpiSource:
         from pptcreator.kpi.frontend_source import FrontendKpiSource
 
         return FrontendKpiSource()
-    raise ValueError(f"Unknown KPI source {name!r}; expected frontend, backend or stub.")
+    if name == "leitstand":
+        from pptcreator.kpi.leitstand_source import LeitstandKpiSource
+
+        return LeitstandKpiSource()
+    raise ValueError(f"Unknown KPI source {name!r}; expected leitstand, frontend, backend or stub.")

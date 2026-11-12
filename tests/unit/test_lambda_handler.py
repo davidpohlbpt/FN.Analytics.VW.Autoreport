@@ -1,4 +1,4 @@
-"""End-to-end through the three Lambda handlers and the all-in-one handler.
+﻿"""End-to-end through the three Lambda handlers and the all-in-one handler.
 
 Control tables in pycore's in-memory SQLite, template in moto S3, decks in moto S3,
 e-mails via moto SES, KPI data from the stub source. Writes decks to tests/result/.
@@ -129,7 +129,7 @@ def test_render_handler_end_to_end(stack):
 
 def test_render_handler_kpi_subset(stack):
     out = lambda_handler.render_handler(
-        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_age"]},
+        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_aktualisierung"]},
         None,
     )
     assert out["slides"] == 2  # Seat: 7 commodities -> one detail slide
@@ -159,7 +159,7 @@ def test_render_handler_missing_template_in_s3(stack):
 def test_send_handler_sends_from_s3(stack):
     render = lambda_handler.render_handler(
         {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37",
-         "recipients": ["a@x.de", "b@x.de"], "kpi_ids": ["bka_age"]},
+         "recipients": ["a@x.de", "b@x.de"], "kpi_ids": ["bka_aktualisierung"]},
         None,
     )
 
@@ -173,7 +173,7 @@ def test_send_handler_sends_from_s3(stack):
 
 def test_send_handler_recipient_override_and_skip(stack, monkeypatch):
     render = lambda_handler.render_handler(
-        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_age"]},
+        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_aktualisierung"]},
         None,
     )
     out = lambda_handler.send_handler({**render, "recipients": ["x@x.de"]}, None)

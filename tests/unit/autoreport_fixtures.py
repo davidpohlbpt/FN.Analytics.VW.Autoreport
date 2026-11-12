@@ -49,10 +49,10 @@ def recipient_rows() -> list[dict]:
 def seed_control_tables(data_repo):
     """Create the tables and insert template + mappings; recipients are optional."""
 
-    def _seed(template_link: str, *, target_location: str | None = None, recipients: bool = True):
+    def _seed(template_link: str, *, target_location: str | None = None, recipients: bool = True, source: str = "stub"):
         data_repo.database.create_all_tables()
         data_repo.write_table(model=AutoreportTemplates, df=pd.DataFrame(template_rows(template_link, target_location)))
-        data_repo.write_table(model=AutoreportMappings, df=pd.DataFrame(as_mapping_rows(TEMPLATE_ID)))
+        data_repo.write_table(model=AutoreportMappings, df=pd.DataFrame(as_mapping_rows(TEMPLATE_ID, source=source)))
         if recipients:
             data_repo.write_table(model=AutoreportRecipients, df=pd.DataFrame(recipient_rows()))
         return TEMPLATE_ID

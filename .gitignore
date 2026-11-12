@@ -166,3 +166,7 @@ cython_debug/
 # Internal CA certificates are environment specific; never commit them
 deployment/certs/*.pem
 
+
+# Local read-only DB exploration helpers
+scratch/
+

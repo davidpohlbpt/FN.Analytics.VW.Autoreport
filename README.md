@@ -61,6 +61,23 @@ DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_
 
 Data sources per KPI:
 
+- `leitstand` (used for all six Control Center KPIs): `pptcreator/kpi/leitstand_source.py`.
+  Slice columns, labels (Translation DB, keyed by column name), colours
+  (`T_Chart_GeometryOption.background.color`) and legend order (`legend.sorting`) are read
+  from the Control Center chart config for the mapping's `chart_id`; the numbers come from
+  `ReportDB.dbo.T_RESULT_Leitstand_Overview` with `MOD = 'Alle' AND EK_ORG = <brand>`
+  (grouped by `COM` for the commodity slides). A week is resolved to the latest
+  `AnalyseZeitpunkt` in that ISO week, else the latest before it. "Ø" for KPI 1 is the
+  BKA-weighted `UpdatedAvgAge` (days). Read-only.
+
+  | KPI | chart_id | columns |
+  |---|---|---|
+  | BKA nach Aktualisierung | 12000 | UpdatedPastYear, UpdatedPast1to2Years, UpdatedPast2To4Years, UpdatedPast4To6Years, UpdatedOver6Years, NoUpdateData |
+  | BKA nach Bearbeitungsstatus | 12002 | BearbSynchron, BearbÜberarbeitungBes, BearbÜberarbeitungLief, BearbÜberarbeitungPCP |
+  | UVB Fehler nach Fehlercode | 12004 | U0, U1, U2, U3 |
+  | Rote BKAs | 12006 | Red0to10, Red11to52, RedOver52 |
+  | BKA nach Abgleichstatus | 120013 | Gruen, Gelb, Rot, Grau |
+  | Saisonalität von Kapazitäten | 120017 | Kap1, Kap2to5, Kap6to10, KapOver10, KapNoData |
 - `frontend`: DQN chart API (`pptcreator/kpi/frontend_source.py`). Needs the mask filter
   field names for brand / commodity / period (`DQN_FILTER_BRAND`, `DQN_FILTER_COMMODITY`,
   `DQN_FILTER_PERIOD`). Colours come from the chart unless `palette_json` is set.

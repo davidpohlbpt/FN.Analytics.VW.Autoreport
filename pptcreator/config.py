@@ -59,7 +59,7 @@ class CreatorSettings(BaseSettings):
     commodity_charts_per_slide: int = 7
     """Number of commodity doughnuts on the detail template slide (Chart 3..9)."""
 
-    kpi_source_override: str | None = Field(default=None, pattern="^(stub|frontend|backend)$")
+    kpi_source_override: str | None = Field(default=None, pattern="^(stub|frontend|backend|leitstand)$")
     """Force one data source for all KPIs regardless of the mapping table (testing)."""
 
 

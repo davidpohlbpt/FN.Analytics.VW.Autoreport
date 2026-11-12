@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod
 from pptcreator.kpi.build_output_slides import (
@@ -114,7 +114,7 @@ def test_template_slot_validation():
 
 def test_registry():
     assert len(KPIS) == 6
-    assert [k.id for k in get_kpis(["kpi3", "bka_age"])] == ["kpi3", "bka_age"]
+    assert [k.id for k in get_kpis(["uvb_fehlercode", "bka_aktualisierung"])] == ["uvb_fehlercode", "bka_aktualisierung"]
     with pytest.raises(ValueError, match="Unknown KPI"):
         get_kpis(["nope"])
 

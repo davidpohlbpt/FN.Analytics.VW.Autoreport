@@ -1,4 +1,4 @@
--- Control tables for the VW Autoreport (ReportDB). SQL Server syntax.
+﻿-- Control tables for the VW Autoreport (ReportDB). SQL Server syntax.
 -- Mirrors pptcreator/models/models.py (AutoreportTemplates / Mappings / Recipients / Runs).
 
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'control')
@@ -29,11 +29,11 @@ CREATE TABLE control.T_Control_Autoreport_Mappings (
     kpi_name       NVARCHAR(200)  NOT NULL,
     slide_title    NVARCHAR(500)  NOT NULL,
     slide_subtitle NVARCHAR(1000) NULL,
-    source         NVARCHAR(20)   NOT NULL CONSTRAINT CK_Autoreport_Mappings_Source CHECK (source IN ('frontend','backend','stub')),
+    source         NVARCHAR(20)   NOT NULL CONSTRAINT CK_Autoreport_Mappings_Source CHECK (source IN ('leitstand','frontend','backend','stub')),
     menu_item_id   INT            NULL,   -- frontend: DQN menu item
     report_id      INT            NULL,   -- frontend: DQN report
     tile_id        INT            NULL,   -- frontend: DQN tile
-    chart_id       INT            NULL,   -- frontend: DQN chart
+    chart_id       INT            NULL,   -- frontend/leitstand: DQN chart (Control Center donuts: 12000, 12002, 12004, 12006, 120013, 120017)
     query_key      NVARCHAR(100)  NULL,   -- backend: key in pptcreator/kpi/sql_source.py QUERIES
     palette_json   NVARCHAR(2000) NULL,   -- {"category": "rgb(r, g, b)", ...} in display order
     average_label  NVARCHAR(20)   NULL CONSTRAINT DF_Autoreport_Mappings_Avg DEFAULT N'Ø',

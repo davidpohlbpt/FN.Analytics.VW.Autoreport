@@ -25,7 +25,8 @@ from pptcreator.models.models import (
 )
 from pptcreator.utils.read_data import read_data
 
-VALID_SOURCES = ("frontend", "backend", "stub")
+VALID_SOURCES = ("leitstand", "frontend", "backend", "stub")
+"""leitstand: Control Center chart config + T_RESULT_Leitstand_Overview (needs chart_id)."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -153,7 +154,9 @@ def _mapping_to_kpi(row: dict) -> KpiDefinition:
         raise ValueError(f"Mapping {row.get('id')}: unknown source {source!r}; expected {VALID_SOURCES}.")
 
     palette = _parse_palette(row.get("palette_json"), row.get("id"))
-    if source != "frontend" and not palette:
+    if source == "leitstand" and not _num_or(row.get("chart_id"), None):
+        raise ValueError(f"Mapping {row.get('id')} ({row.get('kpi_key')}): leitstand source needs chart_id.")
+    if source not in ("frontend", "leitstand") and not palette:
         raise ValueError(
             f"Mapping {row.get('id')} ({row.get('kpi_key')}): palette_json is required for source {source!r}."
         )

@@ -1,4 +1,4 @@
-import json
+﻿import json
 
 import pandas as pd
 import pytest
@@ -37,8 +37,8 @@ def test_template_config_from_tables(seed_control_tables):  # noqa: F811
     assert config.id == TEMPLATE_ID
     assert config.template.is_s3 and config.template.key == "templates/VW.pptx"
     assert config.target.is_s3 and config.target.key == "reports"
-    assert [k.id for k in config.kpis] == ["bka_age", "kpi2", "kpi3", "kpi4", "kpi5", "kpi6"]
-    assert config.kpis[0].palette["> 6 Jahre"] == "rgb(255, 0, 0)"
+    assert [k.id for k in config.kpis] == ["bka_aktualisierung", "bka_bearbeitungsstatus", "uvb_fehlercode", "rote_bka", "bka_abgleichstatus", "kapazitaet_saisonalitaet"]
+    assert config.kpis[0].palette["> 6 Jahre"] == "rgb(247, 48, 33)"
     assert config.kpis[0].average_label == "Ø"
     assert config.kpis[2].average_label is None
     assert config.kpis[0].source == "stub"
@@ -95,9 +95,15 @@ def test_backend_mapping_needs_query_key(seed_control_tables, data_repo):  # noq
 
 def test_source_override(seed_control_tables, monkeypatch):  # noqa: F811
     seed_control_tables("VW.pptx")
-    monkeypatch.setattr(settings, "kpi_source_override", "backend")
+    monkeypatch.setattr(settings, "kpi_source_override", "leitstand")
     config = get_template_config(TEMPLATE_ID)
-    assert {k.source for k in config.kpis} == {"backend"}
+    assert {k.source for k in config.kpis} == {"leitstand"}
+    assert [k.chart_id for k in config.kpis] == [12000, 12002, 12004, 12006, 120013, 120017]
+
+    # backend needs a query_key, which the seeded rows do not have
+    monkeypatch.setattr(settings, "kpi_source_override", "backend")
+    with pytest.raises(ValueError, match="needs query_key"):
+        get_template_config(TEMPLATE_ID)
 
 
 def test_recipient_grouping(seed_control_tables):  # noqa: F811
