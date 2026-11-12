@@ -230,57 +230,60 @@ def _summary(mode: str, outcomes: list[DeckOutcome]) -> dict:
 
 
 # ------------------------------------------------------------------------------ #
-# CLI for local runs: `poetry run pptcreator manual --brand Audi --reference KW37`
+# CLI for local runs: `poetry run pptcreator scheduled --current 2025-KW48`
 # ------------------------------------------------------------------------------ #
 
 
-def cli():
-    import typer
+def cli(argv: list[str] | None = None) -> int:
+    """Local runner; same entry points as the Lambdas, output as JSON."""
+    import argparse
 
-    app = typer.Typer(add_completion=False, help="VW Autoreport local runner")
+    parser = argparse.ArgumentParser(prog="pptcreator", description="VW Autoreport local runner")
+    commands = parser.add_subparsers(dest="command", required=True)
 
-    @app.command()
-    def manual(
-        brand: str = typer.Option(..., help="Brand, e.g. Audi"),
-        reference: str = typer.Option(..., help="Reference period, e.g. KW37"),
-        current: str | None = typer.Option(None, help="Current period, default: this week"),
-        template_id: int | None = typer.Option(None, help="Template id; default: the only active one"),
-        recipient: list[str] = typer.Option([], help="Recipient e-mail (repeatable)"),
-        kpi: list[str] = typer.Option([], help="KPI key subset (repeatable)"),
-    ):
+    manual = commands.add_parser("manual", help="Render one deck for a brand and reference period")
+    manual.add_argument("--brand", required=True, help="EK_ORG value, e.g. Audi")
+    manual.add_argument("--reference", required=True, help="Reference period, e.g. KW37 or 2025-KW37")
+    manual.add_argument("--current", default=None, help="Current period, default: this week")
+    manual.add_argument("--template-id", type=int, default=None, help="Template id; default: the only active one")
+    manual.add_argument("--recipient", action="append", default=[], help="Recipient e-mail (repeatable)")
+    manual.add_argument("--kpi", action="append", default=[], help="KPI key subset (repeatable)")
+
+    scheduled = commands.add_parser("scheduled", help="One deck per recipient/brand from the control tables")
+    scheduled.add_argument("--current", default=None, help="Current period, default: this week")
+    scheduled.add_argument("--template-id", type=int, default=None, help="Template id; default: the only active one")
+    scheduled.add_argument("--adhoc", action="store_true", help="Only rows with send_now = 1")
+
+    render = commands.add_parser("render", help="Render the ReportRequest stored in a JSON file")
+    render.add_argument("event_file", help="JSON file with one ReportRequest")
+
+    args = parser.parse_args(argv)
+
+    if args.command == "manual":
         event = {
             "mode": "manual",
-            "brand": brand,
-            "reference_period": reference,
-            "current_period": current,
-            "template_id": template_id,
-            "recipients": recipient,
-            "kpi_ids": kpi or None,
+            "brand": args.brand,
+            "reference_period": args.reference,
+            "current_period": args.current,
+            "template_id": args.template_id,
+            "recipients": args.recipient,
+            "kpi_ids": args.kpi or None,
         }
-        typer.echo(json.dumps(run(event), indent=2, default=str))
-
-    @app.command()
-    def scheduled(
-        current: str | None = typer.Option(None),
-        reference: str | None = typer.Option(None),
-        template_id: int | None = typer.Option(None),
-        adhoc: bool = typer.Option(False, help="Only send_now rows"),
-    ):
+        result = run(event)
+    elif args.command == "scheduled":
         event = {
-            "mode": "adhoc" if adhoc else "scheduled",
-            "current_period": current,
-            "reference_period": reference,
-            "template_id": template_id,
+            "mode": "adhoc" if args.adhoc else "scheduled",
+            "current_period": args.current,
+            "template_id": args.template_id,
         }
-        typer.echo(json.dumps(run(event), indent=2, default=str))
+        result = run(event)
+    else:
+        with open(args.event_file, encoding="utf-8") as fh:
+            result = render_handler(json.load(fh), None)
 
-    @app.command()
-    def render(event_file: str = typer.Argument(..., help="JSON file with one ReportRequest")):
-        with open(event_file, encoding="utf-8") as fh:
-            typer.echo(json.dumps(render_handler(json.load(fh), None), indent=2, default=str))
-
-    app()
+    print(json.dumps(result, indent=2, default=str))
+    return 0
 
 
 if __name__ == "__main__":
-    cli()
+    raise SystemExit(cli())

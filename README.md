@@ -125,6 +125,45 @@ PowerPoint (needs `pywin32`, dev only). `--current latest` uses the newest snaps
 `--reference previous` the snapshot before the current one; dates and weeks
 (`2025-KW46`) work as well.
 
+### Run the real pipeline locally, driven by the control tables
+
+`pptcreator.preview_control` uses the same code path as the Lambdas: template, mappings,
+brands and recipients come from `control.T_Control_Autoreport_*`, one deck per
+recipient/brand.
+
+```powershell
+# every active recipient/brand, reference week from the recipient row
+poetry run python -m pptcreator.preview_control
+
+# one brand, or override the reference week for a quick test
+poetry run python -m pptcreator.preview_control --brand Audi --current 2025-KW48 --reference 2025-KW40
+```
+
+Requirements: `RESOURCE_TYPE=LOCAL` (default in `.env`), the control tables filled, and
+the template in `<LOCAL_BLOB_DIR>/<storage_container>/` (e.g.
+`C:\temp\autoreport_data\ppt_creator\VW_Template_Overview.pptx`) because `S3_ENABLED=false`.
+Decks land in `previews/`; the run log is written to `T_Control_Autoreport_Runs`.
+`--reference db` (the default) uses the recipient row's week and falls back to the
+snapshot before the current one if that week has no data for the brand.
+
+The equivalent through the Lambda entry points:
+
+```powershell
+poetry run pptcreator scheduled --current 2025-KW48
+poetry run pptcreator manual --brand Audi --reference 2025-KW40 --current 2025-KW48
+```
+
+
+```powershell
+poetry run python -m pptcreator.preview --brand "VW PKW" --current 2025-11-18 --reference previous --png
+```
+
+Reads the six Control Center KPIs live (read-only), renders with the VW template and
+writes `previews/<name>.pptx` (gitignored); `--png` also exports every slide as PNG via
+PowerPoint (needs `pywin32`, dev only). `--current latest` uses the newest snapshot,
+`--reference previous` the snapshot before the current one; dates and weeks
+(`2025-KW46`) work as well.
+
 With `S3_ENABLED=false` the template must exist in `<LOCAL_BLOB_DIR>/<storage_container>/`;
 with `MAIL_ENABLED=false` the deck is rendered but not sent. Rendered decks from the
 tests are written to `tests/result/` for visual inspection.
