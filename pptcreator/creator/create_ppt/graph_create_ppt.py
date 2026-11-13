@@ -115,6 +115,8 @@ def _build_slide_charts(template_charts: dict, output_slide: dict) -> dict:
         headline = object_config.get(ChartObjects.HEADLINE.value)
         if headline is not None:
             headline["translation"] = settings.get("headline", "")
+            if settings.get("headline_lines"):
+                headline["lines"] = settings["headline_lines"]
 
         charts[name] = object_config
 

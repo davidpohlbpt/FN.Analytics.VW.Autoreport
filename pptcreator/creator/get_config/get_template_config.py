@@ -67,13 +67,33 @@ def get_config(shape):
                 "h_align": (
                     TextAlignments(para.alignment.name) if para.alignment else None
                 ),
+                "color": _run_color(run),
+                "name": run.font.name,
             }
+            # Per-line styles, e.g. "{week} – {brand}" (bold + regular) / "{kpi}" (grey)
+            config["font"]["paragraph_styles"] = [
+                {"first": _run_style(p.runs[0]), "rest": _run_style(p.runs[-1])}
+                for p in tf.paragraphs
+                if p.runs
+            ]
 
     # Get font size, alignments etc from charts
     if shape.has_chart:
         chart = shape.chart
         config["has_legend"] = chart.has_legend
-        config["has_data_labels"] = bool(chart.plots and chart.plots[0].has_data_labels)
+        config["has_data_labels"] = _labels_visible(chart)
+        hole = chart._chartSpace.xpath(".//c:holeSize/@val")
+        if hole:
+            config["hole_size"] = int(hole[0])
+        border = chart._chartSpace.xpath(".//c:ser/c:dPt/c:spPr/a:ln")
+        if border:
+            width = border[0].get("w")
+            color = border[0].xpath("./a:solidFill/a:srgbClr/@val")
+            if color:
+                config["slice_border"] = {
+                    "width_emu": int(width) if width else None,
+                    "rgb": color[0],
+                }
         # Without a legend the chart-level defaults are the only font source
         font = chart.legend.font if chart.has_legend else chart.font
         config["font"] = {
@@ -82,3 +102,37 @@ def get_config(shape):
         }
 
     return config
+
+
+def _labels_visible(chart) -> bool:
+    """True only if a data label actually shows something.
+
+    python-pptx's ``has_data_labels`` is True whenever a <c:dLbls> element exists, even
+    if all its show* flags are 0 (as in the VW template, where labels are off).
+    """
+    flags = chart._chartSpace.xpath(
+        ".//c:dLbls/c:showVal/@val | .//c:dLbls/c:showPercent/@val | .//c:dLbls/c:showCatName/@val"
+    )
+    return any(str(v) in ("1", "true") for v in flags)
+
+
+def _run_color(run) -> dict | None:
+    """Explicit RGB or theme colour of a run, as plain data (no python-pptx objects)."""
+    try:
+        color = run.font.color
+        if color.type is None:
+            return None
+        if color.type == 1:  # MSO_COLOR_TYPE.RGB
+            return {"rgb": str(color.rgb)}
+        return {"theme": int(color.theme_color), "brightness": color.brightness}
+    except (AttributeError, ValueError, TypeError):
+        return None
+
+
+def _run_style(run) -> dict:
+    return {
+        "size_pt": run.font.size.pt if run.font.size is not None else None,
+        "is_bold": run.font.bold,
+        "color": _run_color(run),
+        "name": run.font.name,
+    }

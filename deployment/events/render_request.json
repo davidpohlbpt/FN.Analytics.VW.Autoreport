@@ -1,0 +1,13 @@
+{
+  "template_id": 1,
+  "brand": "Audi",
+  "current_period": "2026-KW45",
+  "reference_period": "2026-KW37",
+  "recipients": ["you@example.com"],
+  "recipient_ids": [],
+  "kpi_ids": null,
+  "language": null,
+  "target_file_name": null,
+  "run_id": "manual-test-001",
+  "trigger": "manual"
+}

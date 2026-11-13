@@ -187,7 +187,7 @@ def test_vw_kpi_deck(render_deck):
         assert len(legends) == 1
         runs = legends[0].text_frame.paragraphs[0].runs
         # Runs alternate between a coloured swatch and its label
-        assert [run.text.strip() for run in runs[1::2]] == expected_legend
+        assert [run.text.replace("\u00a0", " ").replace("\u2011", "-").strip() for run in runs[1::2]] == expected_legend
         assert [str(run.font.color.rgb) for run in runs[0::2]] == [
             str(parse_rgb(palette[category])) for category in expected_legend
         ]

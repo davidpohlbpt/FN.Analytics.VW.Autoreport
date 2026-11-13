@@ -1,0 +1,119 @@
+# CI/CD for the VW Autoreport Lambda.
+#
+# The image build needs no external credentials: pycore is vendored as a wheel in
+# ./vendor and all pins live in requirements-docker.txt.
+#
+# Required repository configuration:
+#   secrets.AWS_DEPLOY_ROLE_ARN_DEV   IAM role assumable via GitHub OIDC (dev account)
+#   secrets.AWS_DEPLOY_ROLE_ARN_PROD  IAM role assumable via GitHub OIDC (prod account)
+#   vars.AWS_REGION                   e.g. eu-central-1
+#   vars.ECR_REPOSITORY               e.g. vw-autoreport
+#   vars.SUBNET_IDS / vars.SECURITY_GROUP_IDS / vars.SES_SENDER / vars.DQN_HOST
+#   vars.SQL_CONN_SECRET_ARN / vars.DQN_CREDENTIALS_SECRET_ARN
+#   optional: vars.MAIL_ENABLED, vars.WEEKLY_SCHEDULE_ENABLED
+#
+# main  -> test, build, push, deploy to dev
+# v*    -> test, build, push, deploy to prod (environment protection rule recommended)
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install unixODBC (pycore imports pyodbc)
+        run: sudo apt-get update && sudo apt-get install -y unixodbc unixodbc-dev
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-docker.txt
+          pip install pytest pytest-mock "moto[s3,ses]>=5"
+      - name: Run tests
+        run: pytest -q
+
+  build-and-deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'prod' || 'dev' }}
+    env:
+      STAGE: ${{ startsWith(github.ref, 'refs/tags/v') && 'prod' || 'dev' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.STAGE == 'prod' && secrets.AWS_DEPLOY_ROLE_ARN_PROD || secrets.AWS_DEPLOY_ROLE_ARN_DEV }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories --repository-names "${{ vars.ECR_REPOSITORY }}" >/dev/null 2>&1 \
+            || aws ecr create-repository --repository-name "${{ vars.ECR_REPOSITORY }}" --image-scanning-configuration scanOnPush=true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        id: build
+        run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            -f deployment/Dockerfile \
+            -t "$IMAGE" \
+            --push .
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Install SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Deploy
+        run: |
+          sam deploy \
+            --template-file deployment/template.yaml \
+            --stack-name "vw-autoreport-${STAGE}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --resolve-s3 \
+            --parameter-overrides \
+              Stage="${STAGE}" \
+              ImageUri="${{ steps.build.outputs.image }}" \
+              SubnetIds="${{ vars.SUBNET_IDS }}" \
+              SecurityGroupIds="${{ vars.SECURITY_GROUP_IDS }}" \
+              SesSender="${{ vars.SES_SENDER }}" \
+              DqnHost="${{ vars.DQN_HOST }}" \
+              SqlConnStringSecretArn="${{ vars.SQL_CONN_SECRET_ARN }}" \
+              DqnCredentialsSecretArn="${{ vars.DQN_CREDENTIALS_SECRET_ARN }}" \
+              MailEnabled="${{ vars.MAIL_ENABLED || 'false' }}" \
+              WeeklyScheduleEnabled="${{ vars.WEEKLY_SCHEDULE_ENABLED || 'false' }}"
+
+      - name: Upload template to the report bucket
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks --stack-name "vw-autoreport-${STAGE}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text)
+          aws s3 cp tests/unit/test_data/VW_Template_Overview.pptx "s3://${BUCKET}/templates/VW_Template_Overview.pptx"

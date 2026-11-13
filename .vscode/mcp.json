@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "azure-devops": {
+      "type": "http",
+      "url": "https://mcp.dev.azure.com/factorynavigator"
+    }
+  }
+}

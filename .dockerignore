@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+tests
+docs
+deployment/alembic
+deployment/pipelines
+deployment/template.yaml
+.env
+.env.*
+!.env.global
+test-output.xml
+*.pptx

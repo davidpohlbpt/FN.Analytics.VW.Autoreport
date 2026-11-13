@@ -24,21 +24,24 @@ def create_charts(
     slide_filter: str | None,
 ) -> presentation.Presentation:
 
-    for _, template_object_config in config_dict["charts"].items():
+    for object_name, template_object_config in config_dict["charts"].items():
         chart_config = template_object_config[CHART_OBJECTS.CHART.value]
         chart_data = get_chart_rows(template_object_config, slide_filter)
 
         if template_object_config["chart_type"] == CHART_TYPE.DOUGHNUT:
-            add_donut_chart(slide, chart_config, chart_data)
+            add_donut_chart(slide, chart_config, chart_data, object_name=object_name)
         else:
             raise ValueError(
-                f"Unsupported chart type: {template_object_config['chart_type']!r}"
+                f"{object_name!r}: unsupported chart type "
+                f"{template_object_config['chart_type']!r}"
             )
 
     return prs
 
 
-def add_donut_chart(slide: Slide, chart_config: dict, chart_data: list) -> None:
+def add_donut_chart(
+    slide: Slide, chart_config: dict, chart_data: list, object_name: str = "chart"
+) -> None:
 
     chart_position = chart_config["position"]
     chart_fill_color = chart_config["fillColor"]
@@ -47,8 +50,21 @@ def add_donut_chart(slide: Slide, chart_config: dict, chart_data: list) -> None:
     has_legend = chart_config.get("has_legend", True)
     has_data_labels = chart_config.get("has_data_labels", True)
 
+    if not chart_data:
+        raise ValueError(f"{object_name!r}: no data rows to render.")
+    if any(not isinstance(row, dict) or len(row) < 2 for row in chart_data):
+        raise ValueError(
+            f"{object_name!r}: every row needs a category and a value, got {chart_data!r}"
+        )
+
     # Key assumption: First key is category, second key is value
     category_key, value_key = list(chart_data[0])[:2]
+    missing_colors = [row[category_key] for row in chart_data if row[category_key] not in chart_fill_color]
+    if missing_colors:
+        raise ValueError(
+            f"{object_name!r}: no fill colour for categories {missing_colors}; "
+            f"palette has {list(chart_fill_color)}"
+        )
 
     chart_input = CategoryChartData()
     categories = [row[category_key] for row in chart_data]
@@ -72,7 +88,7 @@ def add_donut_chart(slide: Slide, chart_config: dict, chart_data: list) -> None:
         if hole_size is None:
             hole_size = doughnut.makeelement(qn("c:holeSize"), {})
             doughnut.append(hole_size)
-        hole_size.set("val", str(_DONUT_HOLE_SIZE_PERCENT))
+        hole_size.set("val", str(chart_config.get("hole_size") or _DONUT_HOLE_SIZE_PERCENT))
 
     # Add legend
     chart.has_legend = has_legend
@@ -84,9 +100,14 @@ def add_donut_chart(slide: Slide, chart_config: dict, chart_data: list) -> None:
 
     # Change colors
     series = chart.plots[0].series[0]
+    border = chart_config.get("slice_border") or {}
     for point, category in zip(series.points, categories):
         point.format.fill.solid()
         point.format.fill.fore_color.rgb = parse_rgb(chart_fill_color[category])
+        if border.get("rgb"):
+            point.format.line.color.rgb = RGBColor.from_string(border["rgb"])
+            if border.get("width_emu"):
+                point.format.line.width = Emu(border["width_emu"])
 
     # Add data labels
     plot = chart.plots[0]

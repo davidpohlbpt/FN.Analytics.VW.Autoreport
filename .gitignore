@@ -160,3 +160,17 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Vendored internal packages for the Lambda image build are committed on purpose
+!vendor/*.whl
+# Internal CA certificates are environment specific; never commit them
+deployment/certs/*.pem
+
+
+# Local read-only DB exploration helpers
+scratch/
+
+
+# Local preview decks (python -m pptcreator.preview)
+previews/
+

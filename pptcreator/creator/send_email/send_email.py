@@ -1,14 +1,21 @@
-import base64
-import json
+"""E-mail step of the creation pipeline.
+
+Reads the rendered deck from pycore storage and sends it through Amazon SES. The
+``config_dict`` contract is unchanged from the legacy pipeline: ``target_file_name``,
+``target_blob_container`` and ``recipients`` are required; ``email_subject`` and
+``email_intro`` are optional overrides used by the KPI deck process.
+"""
+
 import logging
 
-import requests
-from pycore.easy import storage, vault
+from pycore.easy import storage
+
+from pptcreator.infra import mailer
 
 
-def send_email(config_dict: dict) -> None:
+def send_email(config_dict: dict) -> str | None:
+    """Send the deck referenced by ``config_dict``. Returns the SES MessageId or None."""
     try:
-        # Read file
         target_file_name = f"{config_dict['target_file_name']}.pptx"
         target_blob_container = config_dict["target_blob_container"]
         ppt_file = storage.read_blob(
@@ -17,89 +24,23 @@ def send_email(config_dict: dict) -> None:
             decode=False,
         )
 
-        # Get recepients
-        recipients = config_dict["recipients"]
-        recipients_list = [
-            {"emailAddress": {"address": recipient}} for recipient in recipients
-        ]
+        recipients = list(config_dict["recipients"])
+        subject = config_dict.get("email_subject") or f"Report: {config_dict['target_file_name']}"
+        intro = config_dict.get("email_intro") or "Please find the attached PowerPoint report:"
 
-        # Get bearer token
-        sender_user = vault.get_secret("sender_user")
-        tenant_id = vault.get_secret("tenant_id")
-        client_id = vault.get_secret("client_id")
-        client_secret = vault.get_secret("client_secret")
+        html_body = f"<p>{intro} <strong>{target_file_name}</strong>.</p>"
+        text_body = f"{intro} {target_file_name}"
 
-        access_token = get_token(
-            tenant_id=tenant_id,
-            client_id=client_id,
-            client_secret=client_secret,
-        )
-
-        attachment = {
-            "@odata.type": "#microsoft.graph.fileAttachment",
-            "name": target_file_name,
-            "contentType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "contentBytes": base64.b64encode(ppt_file).decode("utf-8"),  # type: ignore[arg-type]
-        }
-
-        subject = f"Report: {config_dict['target_file_name']}"
-        html_body = f"<p>Please find the attached PowerPoint report: <strong>{target_file_name}</strong>.</p>"
-
-        send_via_graph(
-            recipients_list=recipients_list,
+        message_id = mailer.send_pptx(
+            recipients=recipients,
             subject=subject,
             html_body=html_body,
-            access_token=access_token,
-            sender_user=sender_user,
-            attachment=attachment,
+            text_body=text_body,
+            attachment_name=target_file_name,
+            attachment_bytes=ppt_file,  # type: ignore[arg-type]
         )
-        logging.info(f"PPT email sent to {recipients_list} (file: {target_file_name})")
+        logging.info(f"PPT email step done for {recipients} (file: {target_file_name})")
+        return message_id
     except Exception as e:
         logging.exception(f"Failed to send PPT email: {e}")
         raise
-
-
-def get_token(tenant_id, client_id, client_secret):
-    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-
-    token_data = {
-        "grant_type": "client_credentials",
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "scope": "https://graph.microsoft.com/.default",
-    }
-
-    token_response = requests.post(token_url, data=token_data)
-    token_response.raise_for_status()
-    access_token = token_response.json()["access_token"]
-
-    return access_token
-
-
-def send_via_graph(
-    recipients_list: list,
-    subject: str,
-    html_body: str,
-    access_token: str,
-    sender_user: str,
-    attachment: dict | None = None,
-) -> None:
-
-    send_mail_url = f"https://graph.microsoft.com/v1.0/users/{sender_user}/sendMail"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json; charset=utf-8",
-    }
-    message: dict = {
-        "subject": subject,
-        "body": {"contentType": "HTML", "content": html_body},
-        "bccRecipients": recipients_list,
-    }
-    message["attachments"] = [attachment]
-
-    payload = {"message": message, "saveToSentItems": True}
-    response = requests.post(
-        send_mail_url, headers=headers, data=json.dumps(payload), timeout=60
-    )
-    response.raise_for_status()
