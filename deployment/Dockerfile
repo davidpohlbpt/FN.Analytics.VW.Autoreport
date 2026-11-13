@@ -37,7 +37,7 @@ RUN if ls ./certs/*.pem >/dev/null 2>&1; then \
       && cp ./certs/*.pem /etc/pki/ca-trust/source/anchors/ \
       && update-ca-trust extract; \
     fi
-# Read by lambda_handler: activates REQUESTS_CA_BUNDLE / SSL_CERT_FILE when the file exists.
+# Read by pptcreator.lambdas._bootstrap: activates REQUESTS_CA_BUNDLE / SSL_CERT_FILE when the file exists.
 # The system trust store above covers the ODBC driver (Encrypt=yes).
 ENV CA_BUNDLE_PATH=${LAMBDA_TASK_ROOT}/certs/ca-bundle.pem
 
@@ -53,7 +53,7 @@ ENV APP_NAME=VwAutoreport \
 
 # Default = Lambda 2 (render). The plan/send functions override the command via the
 # Lambda ImageConfig (see deployment/template.yaml):
-#   pptcreator.lambda_handler.plan_handler
-#   pptcreator.lambda_handler.send_handler
+#   pptcreator.lambdas.plan.handler
+#   pptcreator.lambdas.send.handler
 #   pptcreator.lambda_handler.handler         (all-in-one)
-CMD ["pptcreator.lambda_handler.render_handler"]
+CMD ["pptcreator.lambdas.render.handler"]

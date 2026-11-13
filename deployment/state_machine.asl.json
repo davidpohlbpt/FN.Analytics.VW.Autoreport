@@ -13,6 +13,8 @@
         "run_id.$": "$.Payload.run_id",
         "trigger.$": "$.Payload.trigger",
         "count.$": "$.Payload.count",
+        "template_ids.$": "$.Payload.template_ids",
+        "errors.$": "$.Payload.errors",
         "requests.$": "$.Payload.requests"
       },
       "ResultPath": "$.plan",
@@ -105,7 +107,14 @@
             "Parameters": {
               "status": "failed",
               "step": "render",
-              "request.$": "$",
+              "request": {
+                "run_id.$": "$.run_id",
+                "template_id.$": "$.template_id",
+                "brand.$": "$.brand",
+                "current_period.$": "$.current_period",
+                "reference_period.$": "$.reference_period",
+                "recipients.$": "$.recipients"
+              },
               "error.$": "$.error"
             },
             "End": true

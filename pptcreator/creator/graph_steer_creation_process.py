@@ -140,6 +140,7 @@ def plan_decks(
     template_id: int | None = None,
     current_period: str | ReportPeriod | None = None,
     run_id: str | None = None,
+    template: TemplateConfig | None = None,
 ) -> list[ReportRequest]:
     """Read the recipient table and build one ReportRequest per (brand, reference period).
 
@@ -147,7 +148,7 @@ def plan_decks(
     ``trigger='adhoc'`` only picks rows with ``send_now = 1``. The flag is NOT cleared
     here; the caller (planner Lambda) does that once the requests were handed over.
     """
-    template = get_template_config(template_id)
+    template = template or get_template_config(template_id)
     current = ReportPeriod.parse(current_period or current_calendar_week())
     run_id = run_id or str(uuid.uuid4())
 

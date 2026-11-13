@@ -21,6 +21,11 @@ class CreatorSettings(BaseSettings):
     default_template_id: int | None = None
     """Template used when an event does not name one; None -> the only active template."""
 
+    plan_template_ids: str | None = None
+    """Templates planned per run by the plan Lambda: comma-separated ids (``1,3``) or
+    ``all``. Empty -> ``default_template_id``, else all active templates. A
+    ``template_id`` / ``template_ids`` in the event takes precedence."""
+
     # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"
     """Container (folder) in pycore storage holding the template and the outputs."""

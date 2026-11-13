@@ -31,6 +31,14 @@ Parameters:
   DefaultTemplateId:
     Type: String
     Default: "1"
+    Description: Template for events that name none (e.g. manual render events)
+  PlanTemplateIds:
+    Type: String
+    Default: ""
+    Description: >-
+      Templates the plan Lambda processes per run: comma-separated ids (e.g. "1,3") or
+      "all". Empty -> DefaultTemplateId. A template_id / template_ids in the execution
+      input still takes precedence.
   WeeklyScheduleExpression:
     Type: String
     Default: cron(0 6 ? * MON *)
@@ -118,9 +126,12 @@ Resources:
       FunctionName: !Sub vw-autoreport-${Stage}-plan
       ImageUri: !Ref ImageUri
       ImageConfig:
-        Command: ["pptcreator.lambda_handler.plan_handler"]
+        Command: ["pptcreator.lambdas.plan.handler"]
       MemorySize: 1024
       Timeout: 120
+      Environment:
+        Variables:
+          PLAN_TEMPLATE_IDS: !Ref PlanTemplateIds
       Policies:
         - VPCAccessPolicy: {}
 
@@ -131,7 +142,7 @@ Resources:
       FunctionName: !Sub vw-autoreport-${Stage}-render
       ImageUri: !Ref ImageUri
       ImageConfig:
-        Command: ["pptcreator.lambda_handler.render_handler"]
+        Command: ["pptcreator.lambdas.render.handler"]
       MemorySize: 2048
       EphemeralStorage:
         Size: 1024
@@ -149,7 +160,7 @@ Resources:
       FunctionName: !Sub vw-autoreport-${Stage}-send
       ImageUri: !Ref ImageUri
       ImageConfig:
-        Command: ["pptcreator.lambda_handler.send_handler"]
+        Command: ["pptcreator.lambdas.send.handler"]
       MemorySize: 1024
       Timeout: 120
       Policies:
@@ -185,14 +196,14 @@ Resources:
             Name: !Sub vw-autoreport-${Stage}-weekly
             Schedule: !Ref WeeklyScheduleExpression
             Enabled: !If [WeeklyEnabled, true, false]
-            Input: !Sub '{"trigger": "scheduled", "template_id": ${DefaultTemplateId}}'
+            Input: '{"trigger": "scheduled"}'
         AdhocPoll:
           Type: Schedule
           Properties:
             Name: !Sub vw-autoreport-${Stage}-adhoc
             Schedule: !Ref AdhocPollRate
             Enabled: !If [AdhocEnabled, true, false]
-            Input: !Sub '{"trigger": "adhoc", "template_id": ${DefaultTemplateId}}'
+            Input: '{"trigger": "adhoc"}'
 
   PlanLogGroup:
     Type: AWS::Logs::LogGroup

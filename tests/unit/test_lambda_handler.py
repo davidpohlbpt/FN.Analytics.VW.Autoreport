@@ -9,13 +9,16 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import sqlalchemy as sa
 from pptx import Presentation
+from pycore.easy import database
 
 from pptcreator import lambda_handler
 from pptcreator.config import settings
 from pptcreator.creator.graph_steer_creation_process import current_calendar_week
 from pptcreator.kpi.registry import KPIS
-from pptcreator.models.models import AutoreportRecipients, AutoreportRuns
+from pptcreator.lambdas import plan
+from pptcreator.models.models import AutoreportRecipients, AutoreportRuns, AutoreportTemplates
 from pptcreator.utils.read_data import read_data
 from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables  # noqa: F401
 from tests.unit.infra.conftest import BUCKET, aws  # noqa: F401
@@ -80,6 +83,58 @@ def test_plan_adhoc_clears_send_now(stack):
 def test_plan_rejects_bad_trigger(stack):
     with pytest.raises(ValueError, match="trigger must be"):
         lambda_handler.plan_handler({"trigger": "manual"}, None)
+
+
+def test_plan_template_ids_from_env_and_partial_failure(stack, monkeypatch):
+    monkeypatch.setattr(settings, "plan_template_ids", f"{TEMPLATE_ID}, 99")
+
+    out = lambda_handler.plan_handler({"trigger": "scheduled", "current_period": "2026-KW45"}, None)
+
+    assert out["template_ids"] == [TEMPLATE_ID, 99]
+    assert out["count"] == 3  # template 99 does not exist, the others are still planned
+    assert [e["template_id"] for e in out["errors"]] == [99]
+
+    # the event wins over the environment
+    with pytest.raises(lambda_handler.PlanFailed, match="All templates failed"):
+        lambda_handler.plan_handler({"trigger": "scheduled", "template_ids": [99]}, None)
+
+
+def test_plan_template_ids_all_and_default(stack, monkeypatch):
+    monkeypatch.setattr(settings, "default_template_id", None)
+    monkeypatch.setattr(settings, "plan_template_ids", "all")
+    assert plan.resolve_template_ids({}) == [TEMPLATE_ID]
+    monkeypatch.setattr(settings, "plan_template_ids", None)
+    monkeypatch.setattr(settings, "default_template_id", 7)
+    assert plan.resolve_template_ids({}) == [7]
+    assert plan.resolve_template_ids({"template_id": "3;5;3"}) == [3, 5]
+
+
+def test_plan_payload_too_large_has_no_side_effects(stack, monkeypatch):
+    monkeypatch.setattr(plan, "MAX_PAYLOAD_BYTES", 100)
+    with pytest.raises(lambda_handler.PlanFailed, match="Step Functions"):
+        lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    assert _runs().empty
+    assert read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
+
+
+def test_render_uses_template_snapshot_from_plan(stack):
+    request = lambda_handler.plan_handler(
+        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None
+    )["requests"][0]
+    assert request["template"]["id"] == TEMPLATE_ID and len(request["template"]["kpis"]) == len(KPIS)
+
+    # The control tables change after planning: the run keeps its snapshot
+    table = AutoreportTemplates.__table__
+    with database.engine.begin() as con:
+        con.execute(sa.update(table).values(is_active=False))
+
+    out = lambda_handler.render_handler(request, None)
+    assert out["status"] == "rendered"
+    assert "template" not in out["request"]  # Step Functions payload stays small
+
+    without_snapshot = {k: v for k, v in request.items() if k != "template"}
+    with pytest.raises(lambda_handler.RenderFailed, match="not found or inactive"):
+        lambda_handler.render_handler(without_snapshot, None)
 
 
 # ------------------------------------------------------------------------------ #

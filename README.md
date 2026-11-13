@@ -17,24 +17,33 @@ different handlers:
 ```
 EventBridge (weekly) ──┐
 EventBridge (5 min)  ──┴──> Step Functions
-                              Plan   (Lambda 1, plan_handler)   recipient table -> [ReportRequest]
+                              Plan   (Lambda 1, lambdas/plan.py)   control tables -> [ReportRequest + template snapshot]
                               Map over requests (concurrency 2)
-                                Render (Lambda 2, render_handler) ReportRequest -> deck in S3
-                                Send   (Lambda 3, send_handler)   deck in S3 -> SES e-mail
+                                Render (Lambda 2, lambdas/render.py) one request -> deck in S3
+                                Send   (Lambda 3, lambdas/send.py)   deck in S3 -> SES e-mail
 ```
 
 | Lambda | Handler | Input | Output | Side effects |
 |---|---|---|---|---|
-| 1 Plan | `pptcreator.lambda_handler.plan_handler` | `{"trigger": "scheduled"\|"adhoc", "template_id": 1}` | `{"run_id", "count", "requests": [...]}` | run log rows `queued`; `send_now` cleared for ad hoc rows |
-| 2 Render | `pptcreator.lambda_handler.render_handler` | one `ReportRequest` (`deployment/events/render_request.json`) | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`) | deck in S3; run log `rendered`/`failed`; raises on failure |
-| 3 Send | `pptcreator.lambda_handler.send_handler` | the `RenderResult` (+ optional `recipients` override) | `{"status": "sent", "message_id"}` | SES mail; run log `sent`/`failed` |
+| 1 Plan | `pptcreator.lambdas.plan.handler` | `{"trigger": "scheduled"\|"adhoc"}` (+ optional `template_ids`/`template_id`, `current_period`, `run_id`) | `{"run_id", "template_ids", "count", "errors", "requests": [...]}`; every request carries a `template` snapshot (template link, KPI definitions, file name/subject pattern) | run log rows `queued`; `send_now` cleared for ad hoc rows |
+| 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written `ReportRequest` without `template` (`deployment/events/render_request.json`; then the control tables are read) | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`) | deck in S3; run log `rendered`/`failed`; raises on failure |
+| 3 Send | `pptcreator.lambdas.send.handler` | the `RenderResult` (+ optional `recipients` override) | `{"status": "sent", "message_id"}` | SES mail; run log `sent`/`failed` |
 | all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "manual"\|"scheduled"\|"adhoc", ...}` | summary per deck | same, in one process (local runs, single-Lambda deployment) |
+
+The plan Lambda reads the template and KPI mapping tables once per run and passes them
+on, so every deck of a run uses the same configuration and a failed deck can be replayed
+with its Step Functions input. Templates per run: event `template_ids`/`template_id` >
+`PLAN_TEMPLATE_IDS` > `DEFAULT_TEMPLATE_ID` > all active templates. A template that fails
+to plan is reported in `errors` without blocking the others; if all fail, or the output
+would exceed the Step Functions payload limit, the plan Lambda raises before any side
+effect. `pptcreator.lambda_handler.plan_handler`/`render_handler`/`send_handler` remain as
+aliases.
 
 Lambda 2 is the core:
 
 ```
-render_deck(request)
-  - get_template_config        (T_Control_Autoreport_Templates + _Mappings -> TemplateConfig, KpiDefinitions)
+render_deck(request, template snapshot)
+  - get_template_config        (only without snapshot: T_Control_Autoreport_Templates + _Mappings)
   - s3_sync.download_template  (template_link s3://... -> pycore storage in /tmp)
   - get_kpi_deck_config
       - discover_chart_slots   (template: 2 overview charts, N commodity slots)
@@ -98,6 +107,7 @@ Key switches:
 | `SQL_CONN_SSM_PARAM` (+ `SQL_ODBC_DRIVER`, `SQL_ENCRYPT`, `SQL_TRUST_SERVER_CERTIFICATE`) | Lambda: read an ADO-style connection string (`Server=..;Initial Catalog=..;User ID=..;Password=..`) from SSM and set `LOCAL_SQLSERVER_CONN_STR`/`LOCAL_SQLSERVER_DB` |
 | `S3_OUTPUT_BUCKET` | upload decks to `s3://<S3_OUTPUT_BUCKET>/<S3_OUTPUT_PREFIX>/`, overriding `target_location` of the template row |
 | `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
+| `PLAN_TEMPLATE_IDS` | plan Lambda: templates per run, e.g. `1,3` or `all` (SAM parameter `PlanTemplateIds`) |
 | `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
 | `MAIL_ENABLED`, `SES_SENDER`, `SES_RECIPIENTS_MODE` | e-mail |
 | `KPI_SOURCE_OVERRIDE` (`stub`/`frontend`/`backend`) | force one source for all KPIs (testing) |
