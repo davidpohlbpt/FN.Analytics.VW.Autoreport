@@ -24,8 +24,10 @@ def aws(monkeypatch):
     monkeypatch.setattr(settings, "aws_region", REGION)
     monkeypatch.setattr(settings, "s3_enabled", True)
     monkeypatch.setattr(settings, "s3_bucket", BUCKET)
-    monkeypatch.setattr(settings, "mail_enabled", True)
-    monkeypatch.setattr(settings, "ses_sender", SENDER)
+    # The send Lambda (functions/send/sender) reads its settings from the environment
+    monkeypatch.setenv("AWS_REGION_NAME", REGION)
+    monkeypatch.setenv("MAIL_ENABLED", "true")
+    monkeypatch.setenv("SES_SENDER", SENDER)
 
     aws_clients.reset_clients()
     with mock_aws():

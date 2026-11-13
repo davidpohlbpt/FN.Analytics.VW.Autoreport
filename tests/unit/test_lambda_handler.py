@@ -5,6 +5,7 @@ e-mails via moto SES, KPI data from the stub source. Writes decks to tests/resul
 """
 
 import datetime as dt
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -12,6 +13,7 @@ import pytest
 import sqlalchemy as sa
 from pptx import Presentation
 from pycore.easy import database
+from sender import app as send_app
 
 from pptcreator import lambda_handler
 from pptcreator.config import settings
@@ -223,18 +225,22 @@ def test_render_handler_missing_template_in_s3(stack):
 
 
 # ------------------------------------------------------------------------------ #
-# Lambda 3
+# Lambda 3 (separate ZIP package): contract with the render output
 # ------------------------------------------------------------------------------ #
 
 
-def test_send_handler_sends_from_s3(stack):
-    render = lambda_handler.render_handler(
+def _seat_render(**extra):
+    return lambda_handler.render_handler(
         {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37",
-         "recipients": ["a@x.de", "b@x.de"], "kpi_ids": ["bka_aktualisierung"]},
+         "kpi_ids": ["bka_aktualisierung"], **extra},
         None,
     )
 
-    out = lambda_handler.send_handler(render, None)
+
+def test_send_handler_sends_render_output_from_s3(stack):
+    render = _seat_render(recipients=["a@x.de", "b@x.de"])
+
+    out = send_app.handler(json.loads(json.dumps(render)), None)  # as passed by Step Functions
 
     assert out["status"] == "sent"
     assert out["message_id"]
@@ -243,48 +249,81 @@ def test_send_handler_sends_from_s3(stack):
 
 
 def test_send_handler_recipient_override_and_skip(stack, monkeypatch):
-    render = lambda_handler.render_handler(
-        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_aktualisierung"]},
-        None,
-    )
-    out = lambda_handler.send_handler({**render, "recipients": ["x@x.de"]}, None)
+    render = _seat_render()
+    out = send_app.handler({**render, "recipients": ["x@x.de"]}, None)
     assert out["status"] == "sent" and out["recipients"] == ["x@x.de"]
 
-    out = lambda_handler.send_handler(render, None)  # no recipients at all
+    out = send_app.handler(render, None)  # no recipients at all
     assert out["status"] == "skipped"
 
-    monkeypatch.setattr(settings, "mail_enabled", False)
-    out = lambda_handler.send_handler({**render, "recipients": ["x@x.de"]}, None)
-    assert out["status"] == "skipped" and "mail_enabled" in out["error"]
+    monkeypatch.setenv("MAIL_ENABLED", "false")
+    out = send_app.handler({**render, "recipients": ["x@x.de"]}, None)
+    assert out["status"] == "skipped" and "MAIL_ENABLED" in out["error"]
 
 
-def test_send_handler_failed_render_is_skipped(stack):
-    out = lambda_handler.send_handler(
+def test_send_handler_raises_when_deck_is_missing(stack):
+    render = _seat_render(recipients=["a@x.de"])
+    stack["s3"].delete_object(Bucket=render["bucket"], Key=render["s3_key"])
+    with pytest.raises(send_app.SendFailed, match="NoSuchKey"):
+        send_app.handler(render, None)
+
+
+def test_send_handler_failed_render_is_skipped():
+    out = send_app.handler(
         {"status": "failed", "request": {"brand": "Audi"}, "error": "boom", "recipients": ["x@x.de"]}, None
     )
     assert out["status"] == "skipped"
 
 
 # ------------------------------------------------------------------------------ #
-# Step Functions round trip: plan -> render -> send, with run log
+# Step Functions round trip: plan -> Map(render -> send) -> record
 # ------------------------------------------------------------------------------ #
 
 
 def test_state_machine_round_trip(stack):
     plan = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None)
 
-    sent = []
+    decks = []
     for request in plan["requests"]:
         render = lambda_handler.render_handler(request, None)
-        sent.append(lambda_handler.send_handler(render, None))
+        decks.append(send_app.handler(render, None))
+    # what the Catch of a failed render deck hands to the record step
+    decks.append({
+        "status": "failed", "step": "render",
+        "request": {"run_id": plan["run_id"], "brand": "Skoda", "reference_period": "2026-KW30"},
+        "error": {"Error": "RenderFailed", "Cause": json.dumps({"errorMessage": "no data"})},
+    })
 
-    assert [s["status"] for s in sent] == ["sent", "sent", "sent"]
+    assert [d["status"] for d in decks[:3]] == ["sent", "sent", "sent"]
+    assert set(_runs()["status"]) == {"rendered"}  # the send Lambda has no database access
+
+    out = lambda_handler.record_handler({"run_id": plan["run_id"], "results": decks}, None)
+
+    assert out == {"run_id": plan["run_id"], "recorded": 4, "sent": 3, "skipped": 0, "failed": 1}
     runs = _runs().set_index(["brand", "reference_period"])
-    assert set(runs["status"]) == {"sent"}
+    assert set(runs["status"]) == {"sent"}  # the Skoda deck has no queued row, so nothing to update
     assert runs.loc[("Audi", "2026-KW37"), "s3_key"].endswith("VW_KPI_Report_Audi_2026-KW45_vs_2026-KW37.pptx")
     assert runs.loc[("Audi", "2025-KW37"), "s3_key"].endswith("VW_KPI_Report_Audi_2026-KW45_vs_2025-KW37.pptx")
     assert runs.loc[("Seat", "2026-KW40"), "message_id"]
     assert stack["ses"].get_send_quota()["SentLast24Hours"] == 4  # 2 + 1 Audi, 1 Seat
+
+
+def test_record_handler_maps_skipped_and_failed(stack):
+    plan = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None)
+    by_key = {(r["brand"], r["reference_period"]): r for r in plan["requests"]}
+    audi, other_audi, seat = by_key[("Audi", "2026-KW37")], by_key[("Audi", "2025-KW37")], by_key[("Seat", "2026-KW40")]
+
+    lambda_handler.record_handler({"run_id": plan["run_id"], "results": [
+        {"status": "skipped", "request": audi, "error": "MAIL_ENABLED is false."},
+        {"status": "failed", "step": "send", "request": seat,
+         "error": {"Error": "SendFailed", "Cause": json.dumps({"errorMessage": "SES down"})}},
+    ]}, None)
+
+    runs = _runs().set_index(["brand", "reference_period"])
+    assert runs.loc[(audi["brand"], audi["reference_period"]), "status"] == "rendered"
+    assert runs.loc[(other_audi["brand"], other_audi["reference_period"]), "status"] == "queued"
+    assert runs.loc[(seat["brand"], seat["reference_period"]), "status"] == "failed"
+    assert runs.loc[(seat["brand"], seat["reference_period"]), "error"] == "SendFailed: SES down"
 
 
 # ------------------------------------------------------------------------------ #

@@ -2,8 +2,8 @@ import email
 
 import pytest
 
-from pptcreator.config import settings
-from pptcreator.infra import mailer
+from sender import mailer
+from tests.unit.infra.conftest import aws  # noqa: F401
 
 
 def test_validate_recipients_dedups_and_rejects_invalid():
@@ -49,7 +49,7 @@ def test_build_message_to_mode():
 
 
 def test_attachment_size_guard(monkeypatch):
-    monkeypatch.setattr(settings, "ses_max_attachment_mb", 1)
+    monkeypatch.setenv("SES_MAX_ATTACHMENT_MB", "1")
     with pytest.raises(mailer.MailError, match="above the configured limit"):
         mailer.build_message(
             sender="s@x.de",
@@ -63,7 +63,7 @@ def test_attachment_size_guard(monkeypatch):
 
 
 def test_send_disabled_returns_none(monkeypatch):
-    monkeypatch.setattr(settings, "mail_enabled", False)
+    monkeypatch.setenv("MAIL_ENABLED", "false")
     assert (
         mailer.send_pptx(
             recipients=["a@x.de"],
@@ -77,7 +77,7 @@ def test_send_disabled_returns_none(monkeypatch):
     )
 
 
-def test_send_via_ses(aws):
+def test_send_via_ses(aws):  # noqa: F811
     message_id = mailer.send_pptx(
         recipients=["a@x.de", "b@x.de"],
         subject="KPI",
@@ -91,8 +91,8 @@ def test_send_via_ses(aws):
     assert quota["SentLast24Hours"] == 2  # one per destination
 
 
-def test_send_unverified_sender_raises(aws, monkeypatch):
-    monkeypatch.setattr(settings, "ses_sender", "unknown@x.de")
+def test_send_unverified_sender_raises(aws, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("SES_SENDER", "unknown@x.de")
     with pytest.raises(mailer.MailError):
         mailer.send_pptx(
             recipients=["a@x.de"],

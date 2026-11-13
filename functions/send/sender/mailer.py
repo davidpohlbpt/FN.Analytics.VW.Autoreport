@@ -2,7 +2,7 @@
 
 Uses ``send_raw_email`` because the standard ``send_email`` API does not support
 attachments. SES limits the whole raw message to 40 MB; the base64 encoding adds
-roughly a third, so the attachment is checked against ``ses_max_attachment_mb``.
+roughly a third, so the attachment is checked against ``SES_MAX_ATTACHMENT_MB``.
 """
 
 import logging
@@ -11,8 +11,9 @@ from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from pptcreator.config import settings
-from pptcreator.infra.aws_clients import ses_client
+import boto3
+
+from sender import config
 
 PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 _RETRYABLE = {"Throttling", "ThrottlingException", "ServiceUnavailable", "RequestTimeout"}
@@ -49,10 +50,11 @@ def build_message(
     recipients_mode: str = "bcc",
 ) -> MIMEMultipart:
     size_mb = len(attachment_bytes) / (1024 * 1024)
-    if size_mb > settings.ses_max_attachment_mb:
+    limit_mb = config.max_attachment_mb()
+    if size_mb > limit_mb:
         raise MailError(
             f"Attachment '{attachment_name}' is {size_mb:.1f} MB, above the configured "
-            f"limit of {settings.ses_max_attachment_mb} MB."
+            f"limit of {limit_mb} MB."
         )
 
     msg = MIMEMultipart("mixed")
@@ -90,16 +92,16 @@ def send_pptx(
     """Send the deck. Returns the SES MessageId, or None when mail is disabled."""
     recipients = validate_recipients(recipients)
 
-    if not settings.mail_enabled:
+    if not config.mail_enabled():
         logging.info(
             f"Mail disabled; would send '{attachment_name}' "
             f"({len(attachment_bytes) / 1024:.0f} KB) to {recipients}"
         )
         return None
 
-    sender = sender or settings.ses_sender
+    sender = sender or config.ses_sender()
     if not sender:
-        raise MailError("mail_enabled is true but ses_sender is not configured.")
+        raise MailError("MAIL_ENABLED is true but SES_SENDER is not configured.")
 
     msg = build_message(
         sender=sender,
@@ -109,13 +111,14 @@ def send_pptx(
         text_body=text_body,
         attachment_name=attachment_name,
         attachment_bytes=attachment_bytes,
-        recipients_mode=settings.ses_recipients_mode,
+        recipients_mode=config.recipients_mode(),
     )
 
+    ses = boto3.client("ses", region_name=config.aws_region())
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            response = ses_client().send_raw_email(
+            response = ses.send_raw_email(
                 Source=sender,
                 Destinations=recipients,
                 RawMessage={"Data": msg.as_bytes()},

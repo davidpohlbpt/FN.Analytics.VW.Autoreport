@@ -1,5 +1,5 @@
 {
-  "Comment": "VW Autoreport: plan decks from the recipient table, render each deck, send it. Replace the Resource ARNs with the deployed Lambda ARNs.",
+  "Comment": "VW Autoreport: plan decks from the recipient table, render and send each deck, then record all outcomes in the run log. ${...} ARNs are substituted by SAM.",
   "StartAt": "Plan",
   "States": {
     "Plan": {
@@ -131,6 +131,34 @@
           }
         }
       },
+      "Next": "Record"
+    },
+    "Record": {
+      "Type": "Task",
+      "Comment": "Writes the outcome of every deck to the run log; the send Lambda has no database access.",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${RecordFunctionArn}",
+        "Payload": {
+          "run_id.$": "$.plan.run_id",
+          "results.$": "$.decks"
+        }
+      },
+      "ResultSelector": {
+        "recorded.$": "$.Payload.recorded",
+        "sent.$": "$.Payload.sent",
+        "skipped.$": "$.Payload.skipped",
+        "failed.$": "$.Payload.failed"
+      },
+      "ResultPath": "$.summary",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 10,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
       "End": true
     }
   }

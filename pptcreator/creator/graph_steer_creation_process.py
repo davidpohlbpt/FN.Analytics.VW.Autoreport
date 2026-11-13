@@ -1,12 +1,11 @@
 """Orchestration of the report creation.
 
-Three processes live here, one per Lambda of the state machine, plus the legacy
-per-template report:
+Two processes of the state machine live here, plus the legacy per-template report.
+Sending (Lambda 3) is the separate ``sender`` package in ``functions/send``.
 
 * ``plan_decks``     (Lambda 1) recipients table -> list of ReportRequest
 * ``render_deck``    (Lambda 2) ReportRequest -> deck in S3 (the core of the system)
-* ``send_deck``      (Lambda 3) deck in S3 -> e-mail via SES
-* ``run_deck``       all three in one process, for local runs and the single-Lambda mode
+* ``run_deck``       render + send in one process, for local runs
 * ``graph_steer_creation_process`` -- legacy per-template report (control tables +
   DQN Config Center, one slide per filter value)
 """
@@ -33,7 +32,7 @@ from pptcreator.creator.get_config.get_autoreport_config import (
 from pptcreator.creator.get_config.get_kpi_deck_config import ReportRequest, get_kpi_deck_config
 from pptcreator.creator.get_config.graph_get_config import graph_get_config
 from pptcreator.creator.send_email.send_email import send_email
-from pptcreator.infra import mailer, s3_sync
+from pptcreator.infra import s3_sync
 from pptcreator.kpi.base import KpiSource, ReportPeriod
 from pptcreator.kpi.router import RoutingKpiSource
 from pptcreator.models.models import Templates
@@ -99,7 +98,8 @@ def _get_template_ids():
 
 @dataclasses.dataclass
 class RenderResult:
-    """Output of Lambda 2; everything Lambda 3 needs is in here (no DB access needed)."""
+    """Output of Lambda 2 and input of the send Lambda (functions/send/sender/app.py),
+    which reads it as plain JSON; keep both sides in sync (see the contract test)."""
 
     status: str  # "rendered" | "failed"
     request: dict
@@ -111,18 +111,6 @@ class RenderResult:
     size_bytes: int | None = None
     email_subject: str | None = None
     email_intro: str | None = None
-    error: str | None = None
-
-    def as_dict(self) -> dict:
-        return dataclasses.asdict(self)
-
-
-@dataclasses.dataclass
-class SendResult:
-    status: str  # "sent" | "skipped" | "failed"
-    request: dict
-    message_id: str | None = None
-    recipients: list[str] = dataclasses.field(default_factory=list)
     error: str | None = None
 
     def as_dict(self) -> dict:
@@ -261,64 +249,7 @@ def _fetch_template(location: StorageLocation, container: str) -> str:
 
 
 # ------------------------------------------------------------------------------ #
-# Lambda 3: send
-# ------------------------------------------------------------------------------ #
-
-
-def send_deck(render: RenderResult | dict, recipients: list[str] | None = None) -> SendResult:
-    """E-mail a rendered deck. Reads the file from S3 (or pycore storage in local runs)."""
-    if isinstance(render, dict):
-        render = RenderResult(**render)
-    request = render.request
-    recipients = recipients if recipients is not None else list(request.get("recipients") or [])
-    result = SendResult(status="failed", request=request, recipients=recipients)
-
-    try:
-        if render.status != "rendered" or not render.file_name:
-            result.status = "skipped"
-            result.error = f"Nothing to send: render status is {render.status!r} ({render.error})."
-            return result
-        if not recipients:
-            result.status = "skipped"
-            result.error = "No recipients."
-            return result
-        if not settings.mail_enabled:
-            result.status = "skipped"
-            result.error = "mail_enabled is false."
-            logging.warning(f"mail_enabled is false; '{render.file_name}' not sent to {recipients}.")
-            return result
-
-        if render.s3_key and render.bucket:
-            data = s3_sync.download_bytes(render.bucket, render.s3_key)
-        else:
-            from pycore.easy import storage
-
-            data = storage.read_blob(
-                container_name=render.container or settings.storage_container,
-                blob_name=render.file_name,
-                decode=False,
-            )
-
-        subject = render.email_subject or f"Report: {render.file_name}"
-        intro = render.email_intro or "Please find the attached PowerPoint report:"
-        result.message_id = mailer.send_pptx(
-            recipients=recipients,
-            subject=subject,
-            html_body=f"<p>{intro} <strong>{render.file_name}</strong>.</p>",
-            text_body=f"{intro} {render.file_name}",
-            attachment_name=render.file_name,
-            attachment_bytes=data,  # type: ignore[arg-type]
-        )
-        result.status = "sent"
-    except Exception as exc:
-        logging.exception(f"Send for {request.get('brand')} failed: {exc}")
-        result.status = "failed"
-        result.error = f"{type(exc).__name__}: {exc}"
-    return result
-
-
-# ------------------------------------------------------------------------------ #
-# All-in-one (local runs, single-Lambda deployment)
+# All-in-one (local runs)
 # ------------------------------------------------------------------------------ #
 
 
@@ -357,13 +288,25 @@ def run_deck(
     if render.status != "rendered":
         return outcome
 
-    sent = send_deck(render)
-    if sent.status == "sent":
+    # Imported here: the render image does not contain the sender package
+    from sender.app import send
+
+    data = None
+    if not render.s3_key:
+        from pycore.easy import storage
+
+        data = storage.read_blob(
+            container_name=render.container or settings.storage_container,
+            blob_name=render.file_name,
+            decode=False,
+        )
+    sent = send(render.as_dict(), data=data)
+    if sent["status"] == "sent":
         outcome.status = "sent"
-        outcome.message_id = sent.message_id
-    elif sent.status == "failed":
+        outcome.message_id = sent["message_id"]
+    elif sent["status"] == "failed":
         outcome.status = "failed"
-        outcome.error = sent.error
+        outcome.error = sent["error"]
     else:
         outcome.status = "rendered"
     return outcome
@@ -407,13 +350,11 @@ __all__ = [
     "DeckOutcome",
     "RecipientGroup",
     "RenderResult",
-    "SendResult",
     "current_calendar_week",
     "graph_steer_creation_process",
     "plan_decks",
     "render_deck",
     "run_deck",
-    "send_deck",
     "steer_kpi_deck_process",
     "steer_scheduled_kpi_decks",
 ]

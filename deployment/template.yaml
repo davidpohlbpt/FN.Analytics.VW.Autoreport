@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: VW Autoreport - KPI PowerPoint decks planned, rendered and sent by three Lambdas in a Step Functions state machine
+Description: VW Autoreport - KPI PowerPoint decks planned, rendered, sent and recorded by four Lambdas in a Step Functions state machine
 
 Parameters:
   Stage:
@@ -9,7 +9,7 @@ Parameters:
     Default: dev
   ImageUri:
     Type: String
-    Description: ECR image URI (set by the deploy pipeline); shared by all three functions
+    Description: ECR image URI (set by the deploy pipeline); shared by the plan, render and record functions
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Private subnets with connectivity to the VW network (DQN host + SQL Server)
@@ -65,36 +65,11 @@ Conditions:
 
 Globals:
   Function:
-    PackageType: Image
     Timeout: 900
-    VpcConfig:
-      SubnetIds: !Ref SubnetIds
-      SecurityGroupIds: !Ref SecurityGroupIds
-    Environment:
-      Variables:
-        APP_NAME: VwAutoreport
-        RESOURCE_TYPE: LOCAL
-        LOCAL_BLOB_DIR: /tmp/autoreport_data
-        APP_DB_NAME: ReportDB
-        LOCAL_SQLSERVER_DB: ReportDB
-        # Secrets are resolved by CloudFormation at deploy time into env vars that
-        # pycore's EnvVault / LocalSettings read. Rotation requires a redeploy.
-        LOCAL_SQLSERVER_CONN_STR: !Sub "{{resolve:secretsmanager:${SqlConnStringSecretArn}}}"
-        USERNAME: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:username}}"
-        PASSWORD: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:password}}"
-        BASE_REQUEST_URL: !Ref DqnHost
-        ENDPOINTBASEPATH: !Sub https://${DqnHost}
-        AWS_REGION_NAME: !Ref AWS::Region
-        AUTOREPORT_SCHEMA: control
-        DEFAULT_TEMPLATE_ID: !Ref DefaultTemplateId
-        S3_ENABLED: "true"
-        S3_BUCKET: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
-        S3_TEMPLATE_KEY: templates/VW_Template_Overview.pptx
-        S3_OUTPUT_PREFIX: !Sub reports/${Stage}
-        MAIL_ENABLED: !Ref MailEnabled
-        SES_SENDER: !Ref SesSender
-        SES_RECIPIENTS_MODE: bcc
-        REPORT_LANGUAGE: DE
+
+# Plan, render and record run from the container image (pycore, ODBC driver, VPC access
+# to SQL Server / DQN). Globals cannot be switched off per function, so image settings
+# and secrets are repeated on these three functions only; the send ZIP gets none of them.
 
 Resources:
   ReportBucket:
@@ -124,14 +99,38 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub vw-autoreport-${Stage}-plan
+      PackageType: Image
       ImageUri: !Ref ImageUri
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Environment:
+        Variables:
+          APP_NAME: VwAutoreport
+          RESOURCE_TYPE: LOCAL
+          LOCAL_BLOB_DIR: /tmp/autoreport_data
+          APP_DB_NAME: ReportDB
+          LOCAL_SQLSERVER_DB: ReportDB
+          # Secrets are resolved by CloudFormation at deploy time into env vars that
+          # pycore's EnvVault / LocalSettings read. Rotation requires a redeploy.
+          LOCAL_SQLSERVER_CONN_STR: !Sub "{{resolve:secretsmanager:${SqlConnStringSecretArn}}}"
+          USERNAME: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:username}}"
+          PASSWORD: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:password}}"
+          BASE_REQUEST_URL: !Ref DqnHost
+          ENDPOINTBASEPATH: !Sub https://${DqnHost}
+          AWS_REGION_NAME: !Ref AWS::Region
+          AUTOREPORT_SCHEMA: control
+          DEFAULT_TEMPLATE_ID: !Ref DefaultTemplateId
+          PLAN_TEMPLATE_IDS: !Ref PlanTemplateIds
+          S3_ENABLED: "true"
+          S3_BUCKET: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
+          S3_TEMPLATE_KEY: templates/VW_Template_Overview.pptx
+          S3_OUTPUT_PREFIX: !Sub reports/${Stage}
+          REPORT_LANGUAGE: DE
       ImageConfig:
         Command: ["pptcreator.lambdas.plan.handler"]
       MemorySize: 1024
       Timeout: 120
-      Environment:
-        Variables:
-          PLAN_TEMPLATE_IDS: !Ref PlanTemplateIds
       Policies:
         - VPCAccessPolicy: {}
 
@@ -140,7 +139,34 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub vw-autoreport-${Stage}-render
+      PackageType: Image
       ImageUri: !Ref ImageUri
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Environment:
+        Variables:
+          APP_NAME: VwAutoreport
+          RESOURCE_TYPE: LOCAL
+          LOCAL_BLOB_DIR: /tmp/autoreport_data
+          APP_DB_NAME: ReportDB
+          LOCAL_SQLSERVER_DB: ReportDB
+          # Secrets are resolved by CloudFormation at deploy time into env vars that
+          # pycore's EnvVault / LocalSettings read. Rotation requires a redeploy.
+          LOCAL_SQLSERVER_CONN_STR: !Sub "{{resolve:secretsmanager:${SqlConnStringSecretArn}}}"
+          USERNAME: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:username}}"
+          PASSWORD: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:password}}"
+          BASE_REQUEST_URL: !Ref DqnHost
+          ENDPOINTBASEPATH: !Sub https://${DqnHost}
+          AWS_REGION_NAME: !Ref AWS::Region
+          AUTOREPORT_SCHEMA: control
+          DEFAULT_TEMPLATE_ID: !Ref DefaultTemplateId
+          PLAN_TEMPLATE_IDS: !Ref PlanTemplateIds
+          S3_ENABLED: "true"
+          S3_BUCKET: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
+          S3_TEMPLATE_KEY: templates/VW_Template_Overview.pptx
+          S3_OUTPUT_PREFIX: !Sub reports/${Stage}
+          REPORT_LANGUAGE: DE
       ImageConfig:
         Command: ["pptcreator.lambdas.render.handler"]
       MemorySize: 2048
@@ -153,23 +179,72 @@ Resources:
             BucketName: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
         - VPCAccessPolicy: {}
 
-  # ------------------------------ Lambda 3: send ------------------------------ #
+  # ----------------------- Lambda 3: send (ZIP, no VPC) ----------------------- #
+  # Only the standard library and boto3 (part of the runtime); reaches S3 and SES over
+  # the public AWS endpoints, so it needs neither the VPC nor any database secret.
   SendFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub vw-autoreport-${Stage}-send
-      ImageUri: !Ref ImageUri
-      ImageConfig:
-        Command: ["pptcreator.lambdas.send.handler"]
-      MemorySize: 1024
+      PackageType: Zip
+      Runtime: python3.12
+      Architectures: [x86_64]
+      CodeUri: ../functions/send
+      Handler: sender.app.handler
+      MemorySize: 512
       Timeout: 120
+      Environment:
+        Variables:
+          MAIL_ENABLED: !Ref MailEnabled
+          SES_SENDER: !Ref SesSender
+          SES_RECIPIENTS_MODE: bcc
+          SES_MAX_ATTACHMENT_MB: "35"
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
         - Statement:
             - Effect: Allow
-              Action: [ses:SendRawEmail, ses:SendEmail]
+              Action: [ses:SendRawEmail]
               Resource: "*"
+
+  # ------------------------------ Lambda 4: record ----------------------------- #
+  RecordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub vw-autoreport-${Stage}-record
+      PackageType: Image
+      ImageUri: !Ref ImageUri
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Environment:
+        Variables:
+          APP_NAME: VwAutoreport
+          RESOURCE_TYPE: LOCAL
+          LOCAL_BLOB_DIR: /tmp/autoreport_data
+          APP_DB_NAME: ReportDB
+          LOCAL_SQLSERVER_DB: ReportDB
+          # Secrets are resolved by CloudFormation at deploy time into env vars that
+          # pycore's EnvVault / LocalSettings read. Rotation requires a redeploy.
+          LOCAL_SQLSERVER_CONN_STR: !Sub "{{resolve:secretsmanager:${SqlConnStringSecretArn}}}"
+          USERNAME: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:username}}"
+          PASSWORD: !Sub "{{resolve:secretsmanager:${DqnCredentialsSecretArn}:SecretString:password}}"
+          BASE_REQUEST_URL: !Ref DqnHost
+          ENDPOINTBASEPATH: !Sub https://${DqnHost}
+          AWS_REGION_NAME: !Ref AWS::Region
+          AUTOREPORT_SCHEMA: control
+          DEFAULT_TEMPLATE_ID: !Ref DefaultTemplateId
+          PLAN_TEMPLATE_IDS: !Ref PlanTemplateIds
+          S3_ENABLED: "true"
+          S3_BUCKET: !Sub vw-autoreport-${Stage}-${AWS::AccountId}
+          S3_TEMPLATE_KEY: templates/VW_Template_Overview.pptx
+          S3_OUTPUT_PREFIX: !Sub reports/${Stage}
+          REPORT_LANGUAGE: DE
+      ImageConfig:
+        Command: ["pptcreator.lambdas.record.handler"]
+      MemorySize: 512
+      Timeout: 120
+      Policies:
         - VPCAccessPolicy: {}
 
   # ------------------------------ State machine ------------------------------- #
@@ -182,6 +257,7 @@ Resources:
         PlanFunctionArn: !GetAtt PlanFunction.Arn
         RenderFunctionArn: !GetAtt RenderFunction.Arn
         SendFunctionArn: !GetAtt SendFunction.Arn
+        RecordFunctionArn: !GetAtt RecordFunction.Arn
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref PlanFunction
@@ -189,6 +265,8 @@ Resources:
             FunctionName: !Ref RenderFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref SendFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RecordFunction
       Events:
         Weekly:
           Type: Schedule
@@ -219,6 +297,11 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/vw-autoreport-${Stage}-send
+      RetentionInDays: 90
+  RecordLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/vw-autoreport-${Stage}-record
       RetentionInDays: 90
 
 Outputs:

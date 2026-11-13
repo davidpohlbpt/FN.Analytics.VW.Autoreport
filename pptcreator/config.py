@@ -45,18 +45,8 @@ class CreatorSettings(BaseSettings):
     """When set, decks are uploaded to s3://<s3_output_bucket>/<s3_output_prefix>/,
     overriding ``target_location`` of the template row."""
 
-    # --------------------------------- SES ----------------------------------- #
-    mail_enabled: bool = False
-    """When false, the e-mail step is skipped and only logged."""
-
-    ses_sender: str | None = None
-    """Verified SES sender address."""
-
-    ses_recipients_mode: str = Field(default="bcc", pattern="^(bcc|to)$")
-    """Whether recipients are placed in ``To`` or ``Bcc``."""
-
-    ses_max_attachment_mb: int = 35
-    """SES hard limit is 40 MB for the whole raw message; keep a safety margin."""
+    # ---------------------------------- AWS ----------------------------------- #
+    # Mail settings (MAIL_ENABLED, SES_*) belong to the send Lambda: functions/send/sender/config.py
 
     aws_region: str | None = Field(default=None, validation_alias="AWS_REGION_NAME")
     """Region for boto3 clients. Read from ``AWS_REGION_NAME`` because ``AWS_REGION`` is a

@@ -1,12 +1,14 @@
 """Local CLI, all-in-one handler and backwards compatible Lambda entry points.
 
-The state machine Lambdas live in ``pptcreator.lambdas`` (one module each):
+The state machine Lambdas from the render image live in ``pptcreator.lambdas``:
 
 ``pptcreator.lambdas.plan.handler``    Lambda 1  (alias ``plan_handler``)
 ``pptcreator.lambdas.render.handler``  Lambda 2  (alias ``render_handler``)
-``pptcreator.lambdas.send.handler``    Lambda 3  (alias ``send_handler``)
+``pptcreator.lambdas.record.handler``  Lambda 4  (alias ``record_handler``)
 
-``handler``  (all-in-one, for local runs and a single-Lambda deployment)
+Lambda 3 (send) is the separate ZIP package ``functions/send/sender``.
+
+``handler``  (all-in-one, for local runs; needs the sender package on the path)
     in:  {"mode": "scheduled" | "adhoc" | "manual", ...}
     out: summary with one entry per deck
 """
@@ -29,10 +31,9 @@ from pptcreator.creator.graph_steer_creation_process import (  # noqa: E402
 from pptcreator.kpi.base import KpiSource  # noqa: E402
 from pptcreator.lambdas.plan import PlanFailed  # noqa: E402,F401
 from pptcreator.lambdas.plan import handler as plan_handler  # noqa: E402,F401
+from pptcreator.lambdas.record import handler as record_handler  # noqa: E402,F401
 from pptcreator.lambdas.render import RenderFailed  # noqa: E402,F401
 from pptcreator.lambdas.render import handler as render_handler  # noqa: E402
-from pptcreator.lambdas.send import SendFailed  # noqa: E402,F401
-from pptcreator.lambdas.send import handler as send_handler  # noqa: E402,F401
 
 MODES = ("scheduled", "manual", "adhoc")
 
