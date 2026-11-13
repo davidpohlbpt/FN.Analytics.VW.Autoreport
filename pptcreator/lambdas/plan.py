@@ -1,18 +1,24 @@
-"""Lambda 1: read the control tables and hand one work item per deck to the render Lambda.
+"""Lambda 1: read the recipient table and hand one work item per deck to the render Lambda.
 
-in:  {"trigger": "scheduled" | "adhoc",
+in:  {"trigger": "adhoc" | "scheduled",               default: adhoc
       "template_ids": [1, 3] | "template_id": 1,     optional, else PLAN_TEMPLATE_IDS
-      "current_period": "2026-KW45",                  optional, else this week
+      "recipient_ids": [7, 8],                        optional, only these rows
       "run_id": "..."}                                optional
-out: {"run_id", "trigger", "template_ids", "count", "errors",
+out: {"run_id", "trigger", "template_ids", "count", "skipped", "errors",
       "requests": [ReportRequest + {"template": TemplateConfig snapshot}, ...]}
+
+``adhoc`` picks the recipient rows with ``send_now = 1``; that flag is set and cleared by
+the frontend and by the record step, never here. Every request is one recipient row:
+the two snapshot dates come from ``primary_date`` / ``reference_date`` and are passed
+through unvalidated to the KPI source.
 
 Each request carries the full template config (template link, KPI definitions, file
 name and subject pattern), so the whole run uses one consistent snapshot and the render
 Lambda does not re-read the template and mapping tables.
 
-Side effects: run log rows 'queued'; send_now cleared for ad hoc rows. Both only happen
-after the payload is known to fit into the Step Functions state limit.
+Side effects: one run-log row per deck with status 'processing' (the claim that stops
+the 5-10 minute poller from sending a row twice), written only after the payload is
+known to fit into the Step Functions state limit.
 """
 
 from __future__ import annotations
@@ -28,10 +34,7 @@ from pptcreator.creator.get_config.get_autoreport_config import (  # noqa: E402
     get_template_config,
     list_active_template_ids,
 )
-from pptcreator.creator.graph_steer_creation_process import (  # noqa: E402
-    current_calendar_week,
-    plan_decks,
-)
+from pptcreator.creator.graph_steer_creation_process import plan_decks  # noqa: E402
 from pptcreator.utils import run_log  # noqa: E402
 
 TRIGGERS = ("scheduled", "adhoc")
@@ -48,7 +51,7 @@ def handler(event, context):
     event = normalise_event(event)
     log_start(context, event)
 
-    trigger = event.get("trigger") or event.get("mode") or "scheduled"
+    trigger = event.get("trigger") or event.get("mode") or "adhoc"
     if trigger not in TRIGGERS:
         raise ValueError(f"trigger must be one of {TRIGGERS}, got {trigger!r}.")
     template_ids = resolve_template_ids(event)
@@ -56,15 +59,12 @@ def handler(event, context):
         raise PlanFailed("No template to plan: none configured and none active.")
 
     run_id = event.get("run_id") or str(uuid.uuid4())
-    current = event.get("current_period") or current_calendar_week()
 
     requests, items, errors = [], [], []
     for template_id in template_ids:
         try:
             template = get_template_config(template_id)
-            planned = plan_decks(
-                trigger=trigger, template=template, current_period=current, run_id=run_id
-            )
+            planned = plan_decks(trigger=trigger, template=template, run_id=run_id)
         except Exception as exc:
             # One broken template must not block the reports of the others
             logging.exception(f"Planning template {template_id} failed: {exc}")
@@ -77,21 +77,36 @@ def handler(event, context):
     if len(errors) == len(template_ids):
         raise PlanFailed(f"All templates failed: {errors}")
 
+    if event.get("recipient_ids"):
+        wanted = {int(i) for i in event["recipient_ids"]}
+        requests = [r for r in requests if r.recipient_id in wanted]
+        items = [i for i in items if i.get("recipient_ids") and i["recipient_ids"][0] in wanted]
+
+    # A row that is still being processed by an earlier run is left alone: retrying it
+    # automatically would send the same deck again on every poll.
+    claimed = run_log.open_recipient_ids([r.recipient_id for r in requests])
+    if claimed:
+        logging.warning(f"Skipping {len(claimed)} recipient row(s) with an open claim: {sorted(claimed)}")
+    selected = [r for r in requests if r.recipient_id not in claimed]
+    items = [i for i in items if i.get("recipient_ids") and i["recipient_ids"][0] not in claimed]
+
     result = {
         "run_id": run_id,
         "trigger": trigger,
         "template_ids": template_ids,
         "count": len(items),
+        "skipped": len(claimed),
         "errors": errors,
         "requests": items,
     }
     _check_payload_size(result)
 
-    run_log.log_queued(requests)
-    if trigger == "adhoc":
-        run_log.clear_send_now(sorted({i for r in requests for i in r.recipient_ids}))
+    run_log.log_processing(selected)
 
-    logging.info(f"Planned {len(items)} deck(s) for {trigger} from template(s) {template_ids}.")
+    logging.info(
+        f"Planned {len(items)} deck(s) for {trigger} from template(s) {template_ids}; "
+        f"skipped {len(claimed)} claimed row(s)."
+    )
     return result
 
 

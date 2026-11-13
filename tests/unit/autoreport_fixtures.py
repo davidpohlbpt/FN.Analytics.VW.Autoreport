@@ -48,21 +48,22 @@ def brand_rows() -> list[dict]:
 def recipient_rows() -> list[dict]:
     now = dt.datetime(2026, 11, 11, 12, 0, 0)
 
-    def row(id_, email, brand_id, year, week, send_now=False, active=True):
+    def row(id_, email, brand_id, primary, reference, send_now=False):
         return {
             "id": id_, "template_id": TEMPLATE_ID, "email": email, "brand_id": brand_id,
-            "reference_year": year, "reference_week": week, "send_now": send_now,
-            "is_active": active, "last_edited_at": now,
+            "primary_date": primary, "reference_date": reference, "send_now": send_now,
+            "last_edited_at": now,
         }
 
+    # primary/reference are AnalyseZeitpunkt-style dates, as the frontend stores them
     return [
-        row(1, "a@x.de", AUDI, 2026, 37),
-        row(2, "b@x.de", AUDI, 2026, 37, send_now=True),
-        row(3, "c@x.de", SEAT, 2026, 40),
-        row(4, "d@x.de", SEAT, 2026, 30, send_now=True, active=False),  # inactive row
-        row(5, "", SKODA, 2026, 30),                                    # missing email
-        row(6, "A@x.de", AUDI, 2025, 37),                               # other week, same brand
-        row(7, "e@x.de", PORSCHE, 2026, 37),                            # inactive brand
+        row(1, "a@x.de", AUDI, "2025-11-28", "2025-11-18"),
+        row(2, "b@x.de", AUDI, "2025-11-28", "2025-11-18", send_now=True),
+        row(3, "c@x.de", SEAT, "2025-11-11", "2025-09-24"),
+        row(4, "d@x.de", SEAT, "2025-10-28", "2025-08-29", send_now=True),
+        row(5, "", SKODA, "2025-10-28", "2025-08-29"),          # missing email
+        row(6, "A@x.de", AUDI, "2025-11-18", "2025-11-11"),     # same brand, other dates
+        row(7, "e@x.de", PORSCHE, "2025-11-28", "2025-11-18"),  # inactive brand
     ]
 
 

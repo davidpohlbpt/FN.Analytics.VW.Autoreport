@@ -54,32 +54,59 @@ def _runs() -> pd.DataFrame:
 # ------------------------------------------------------------------------------ #
 
 
-def test_plan_scheduled(stack):
-    out = lambda_handler.plan_handler(
-        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None
-    )
+def test_plan_adhoc_picks_send_now_rows(stack):
+    out = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
 
-    assert out["count"] == 3
-    by_key = {(r["brand"], r["reference_period"]): r for r in out["requests"]}
-    assert by_key[("Audi", "2026-KW37")]["recipients"] == ["a@x.de", "b@x.de"]
-    assert by_key[("Audi", "2025-KW37")]["recipients"] == ["A@x.de"]  # same brand, other week
-    assert by_key[("Seat", "2026-KW40")]["recipients"] == ["c@x.de"]
-    assert all(r["run_id"] == out["run_id"] and r["trigger"] == "scheduled" for r in out["requests"])
+    assert out["count"] == 2  # rows 2 (Audi) and 4 (Seat) have send_now = 1
+    by_email = {r["recipients"][0]: r for r in out["requests"]}
+    assert set(by_email) == {"b@x.de", "d@x.de"}
+    assert by_email["b@x.de"]["current_period"] == "2025-11-28"
+    assert by_email["b@x.de"]["reference_period"] == "2025-11-18"
+    assert by_email["b@x.de"]["recipient_ids"] == [2]
+    assert all(r["run_id"] == out["run_id"] and r["trigger"] == "adhoc" for r in out["requests"])
 
+    # plan claims the rows but does not touch send_now; the record step clears it
     runs = _runs()
-    assert len(runs) == 3 and set(runs["status"]) == {"queued"}
-    # scheduled run must not touch send_now
+    assert len(runs) == 2 and set(runs["status"]) == {"processing"}
+    assert set(runs["recipient_id"]) == {2, 4}
     assert read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
 
 
-def test_plan_adhoc_clears_send_now(stack):
-    out = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None)
+def test_plan_skips_rows_with_an_open_claim(stack):
+    first = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    assert first["count"] == 2
 
-    assert out["count"] == 1
-    assert out["requests"][0]["recipients"] == ["b@x.de"]
-    assert out["requests"][0]["recipient_ids"] == [2]
-    assert not read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
-    assert read_data(AutoreportRecipients, ["id"], [4])["send_now"].iloc[0]  # inactive row untouched
+    # the poller runs again before the first run finished: those rows must not be sent twice
+    second = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    assert second["count"] == 0 and second["skipped"] == 2 and second["requests"] == []
+    assert len(_runs()) == 2
+
+    # once recorded, the row is free again (a deliberate resend by the frontend)
+    lambda_handler.record_handler({"run_id": first["run_id"], "results": [
+        {"status": "failed", "step": "send", "request": r, "error": {"Error": "SendFailed", "Cause": "x"}}
+        for r in first["requests"]
+    ]}, None)
+    third = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    assert third["count"] == 2
+
+
+def test_plan_scheduled_plans_every_row(stack):
+    out = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID}, None)
+
+    assert out["count"] == 5  # every valid row, one deck each
+    assert len({tuple(r["recipient_ids"]) for r in out["requests"]}) == 5
+
+
+def test_plan_recipient_id_filter(stack):
+    out = lambda_handler.plan_handler(
+        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "recipient_ids": [3]}, None
+    )
+    assert out["count"] == 1 and out["requests"][0]["recipients"] == ["c@x.de"]
+
+
+def test_plan_default_trigger_is_adhoc(stack):
+    out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
+    assert out["trigger"] == "adhoc" and out["count"] == 2
 
 
 def test_plan_rejects_bad_trigger(stack):
@@ -90,10 +117,10 @@ def test_plan_rejects_bad_trigger(stack):
 def test_plan_template_ids_from_env_and_partial_failure(stack, monkeypatch):
     monkeypatch.setattr(settings, "plan_template_ids", f"{TEMPLATE_ID}, 99")
 
-    out = lambda_handler.plan_handler({"trigger": "scheduled", "current_period": "2026-KW45"}, None)
+    out = lambda_handler.plan_handler({"trigger": "adhoc"}, None)
 
     assert out["template_ids"] == [TEMPLATE_ID, 99]
-    assert out["count"] == 3  # template 99 does not exist, the others are still planned
+    assert out["count"] == 2  # template 99 does not exist, the others are still planned
     assert [e["template_id"] for e in out["errors"]] == [99]
 
     # the event wins over the environment
@@ -115,8 +142,7 @@ def test_plan_payload_too_large_has_no_side_effects(stack, monkeypatch):
     monkeypatch.setattr(plan, "MAX_PAYLOAD_BYTES", 100)
     with pytest.raises(lambda_handler.PlanFailed, match="Step Functions"):
         lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
-    assert _runs().empty
-    assert read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
+    assert _runs().empty  # no claim written when the payload would not fit
 
 
 def test_render_uses_template_snapshot_from_plan(stack):
@@ -281,49 +307,74 @@ def test_send_handler_failed_render_is_skipped():
 
 
 def test_state_machine_round_trip(stack):
-    plan = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None)
+    plan = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
 
     decks = []
     for request in plan["requests"]:
         render = lambda_handler.render_handler(request, None)
         decks.append(send_app.handler(render, None))
-    # what the Catch of a failed render deck hands to the record step
+    # what the Catch of a failed render deck hands to the record step: a row with
+    # send_now = 0 that this run also claimed, so the run log already has its row
+    pending = lambda_handler.plan_handler(
+        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "recipient_ids": [3]}, None
+    )["requests"][0]
     decks.append({
-        "status": "failed", "step": "render",
-        "request": {"run_id": plan["run_id"], "brand": "Skoda", "reference_period": "2026-KW30"},
+        "status": "failed", "step": "render", "request": pending,
         "error": {"Error": "RenderFailed", "Cause": json.dumps({"errorMessage": "no data"})},
     })
 
-    assert [d["status"] for d in decks[:3]] == ["sent", "sent", "sent"]
-    assert set(_runs()["status"]) == {"rendered"}  # the send Lambda has no database access
+    assert [d["status"] for d in decks[:2]] == ["sent", "sent"]
+    # render updated its claim, the extra row is still only claimed; send has no DB access
+    assert set(_runs()["status"]) == {"rendered", "processing"}
 
     out = lambda_handler.record_handler({"run_id": plan["run_id"], "results": decks}, None)
 
-    assert out == {"run_id": plan["run_id"], "recorded": 4, "sent": 3, "skipped": 0, "failed": 1}
-    runs = _runs().set_index(["brand", "reference_period"])
-    assert set(runs["status"]) == {"sent"}  # the Skoda deck has no queued row, so nothing to update
-    assert runs.loc[("Audi", "2026-KW37"), "s3_key"].endswith("VW_KPI_Report_Audi_2026-KW45_vs_2026-KW37.pptx")
-    assert runs.loc[("Audi", "2025-KW37"), "s3_key"].endswith("VW_KPI_Report_Audi_2026-KW45_vs_2025-KW37.pptx")
-    assert runs.loc[("Seat", "2026-KW40"), "message_id"]
-    assert stack["ses"].get_send_quota()["SentLast24Hours"] == 4  # 2 + 1 Audi, 1 Seat
+    assert out == {"run_id": plan["run_id"], "recorded": 3, "sent": 2, "skipped": 0, "failed": 1, "cleared": 2}
+    runs = _runs().set_index("recipient_id")
+    assert runs.loc[2, "status"] == "sent" and runs.loc[2, "message_id"]
+    assert runs.loc[2, "user_email"] == "b@x.de"
+    assert runs.loc[2, "s3_key"].endswith("VW_KPI_Report_Audi_2025-11-28_vs_2025-11-18.pptx")
+    assert runs.loc[4, "status"] == "sent"
+    assert runs.loc[3, "status"] == "failed"
+    assert "no data" in runs.loc[3, "error"]
+    assert stack["ses"].get_send_quota()["SentLast24Hours"] == 2
+
+    # send_now of the sent rows is gone; nothing else was touched
+    send_now = read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
+    assert not send_now
+    assert not read_data(AutoreportRecipients, ["id"], [4])["send_now"].iloc[0]
+    assert not read_data(AutoreportRecipients, ["id"], [1])["send_now"].iloc[0]  # was already false
 
 
-def test_record_handler_maps_skipped_and_failed(stack):
-    plan = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None)
-    by_key = {(r["brand"], r["reference_period"]): r for r in plan["requests"]}
-    audi, other_audi, seat = by_key[("Audi", "2026-KW37")], by_key[("Audi", "2025-KW37")], by_key[("Seat", "2026-KW40")]
+def test_skip_leaves_send_now_cleared_but_row_not_resent(stack):
+    plan = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    request = plan["requests"][0]
+
+    # MAIL_ENABLED=false in the send Lambda -> skipped, still a finished run
+    out = lambda_handler.record_handler({"run_id": plan["run_id"], "results": [
+        {"status": "skipped", "request": request, "error": "MAIL_ENABLED is false."}
+    ]}, None)
+
+    assert out["sent"] == 0 and out["skipped"] == 1 and out["cleared"] == 1
+    assert _runs().set_index("recipient_id").loc[request["recipient_ids"][0], "status"] == "skipped"
+    assert not read_data(AutoreportRecipients, ["id"], [request["recipient_ids"][0]])["send_now"].iloc[0]
+
+
+def test_record_handler_failure_keeps_send_now(stack):
+    plan = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    by_email = {r["recipients"][0]: r for r in plan["requests"]}
 
     lambda_handler.record_handler({"run_id": plan["run_id"], "results": [
-        {"status": "skipped", "request": audi, "error": "MAIL_ENABLED is false."},
-        {"status": "failed", "step": "send", "request": seat,
+        {"status": "failed", "step": "send", "request": by_email["d@x.de"],
          "error": {"Error": "SendFailed", "Cause": json.dumps({"errorMessage": "SES down"})}},
     ]}, None)
 
-    runs = _runs().set_index(["brand", "reference_period"])
-    assert runs.loc[(audi["brand"], audi["reference_period"]), "status"] == "rendered"
-    assert runs.loc[(other_audi["brand"], other_audi["reference_period"]), "status"] == "queued"
-    assert runs.loc[(seat["brand"], seat["reference_period"]), "status"] == "failed"
-    assert runs.loc[(seat["brand"], seat["reference_period"]), "error"] == "SendFailed: SES down"
+    runs = _runs().set_index("recipient_id")
+    assert runs.loc[4, "status"] == "failed" and runs.loc[4, "error"] == "SendFailed: SES down"
+    assert runs.loc[2, "status"] == "processing"  # not part of this record call
+    # the failed row keeps send_now, so the user sees it was not delivered (no auto retry,
+    # the claim row is closed which is what stops the poller from looping)
+    assert read_data(AutoreportRecipients, ["id"], [4])["send_now"].iloc[0]
 
 
 # ------------------------------------------------------------------------------ #
@@ -341,8 +392,8 @@ def test_all_in_one_manual(stack):
 
 
 def test_all_in_one_scheduled(stack):
-    summary = lambda_handler.run({"mode": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"})
-    assert summary["decks"] == 3 and summary["sent"] == 3
+    summary = lambda_handler.run({"mode": "scheduled", "template_id": TEMPLATE_ID})
+    assert summary["decks"] == 5 and summary["sent"] == 5  # one deck per recipient row
 
 
 def test_all_in_one_errors():

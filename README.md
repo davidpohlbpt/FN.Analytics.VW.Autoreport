@@ -28,10 +28,10 @@ EventBridge (5 min)  ──┴──> Step Functions
 
 | Lambda | Handler | Input | Output | Side effects |
 |---|---|---|---|---|
-| 1 Plan | `pptcreator.lambdas.plan.handler` | `{"trigger": "scheduled"\|"adhoc"}` (+ optional `template_ids`/`template_id`, `current_period`, `run_id`) | `{"run_id", "template_ids", "count", "errors", "requests": [...]}`; every request carries a `template` snapshot (template link, KPI definitions, file name/subject pattern) | run log rows `queued`; `send_now` cleared for ad hoc rows |
+| 1 Plan | `pptcreator.lambdas.plan.handler` | `{"trigger": "adhoc"\|"scheduled"}` (default `adhoc`; optional `template_ids`/`template_id`, `recipient_ids`, `run_id`) | `{"run_id", "template_ids", "count", "skipped", "errors", "requests": [...]}`; one request per recipient row, each with a `template` snapshot (template link, KPI definitions, file name/subject pattern) | run log rows `processing` (the claim); rows with an open claim are skipped |
 | 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written `ReportRequest` without `template` (`deployment/events/render_request.json`; then the control tables are read) | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`) | deck in S3; run log `rendered`/`failed`; raises on failure |
 | 3 Send | `sender.app.handler` (ZIP) | the `RenderResult` as JSON (+ optional `recipients` override) | `{"status": "sent"\|"skipped", "request", "recipients", "message_id", "error"}` | SES mail; raises on failure |
-| 4 Record | `pptcreator.lambdas.record.handler` | `{"run_id", "results": [Map output]}` | `{"recorded", "sent", "skipped", "failed"}` | run log `sent` / `rendered` (mail skipped) / `failed` |
+| 4 Record | `pptcreator.lambdas.record.handler` | `{"run_id", "results": [Map output]}` | `{"recorded", "sent", "skipped", "failed", "cleared"}` | run log `sent` / `skipped` / `failed`; `send_now` cleared for sent and skipped rows |
 | all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "manual"\|"scheduled"\|"adhoc", ...}` | summary per deck | render + send in one process (local runs only; needs `functions/send` on the path, which `poetry install` and pytest provide) |
 
 The `RenderResult` is the contract between the image and the send ZIP: both sides only
@@ -42,7 +42,9 @@ imports pycore, python-pptx, pandas or `pptcreator`.
 The plan Lambda reads the template and KPI mapping tables once per run and passes them
 on, so every deck of a run uses the same configuration and a failed deck can be replayed
 with its Step Functions input. Templates per run: event `template_ids`/`template_id` >
-`PLAN_TEMPLATE_IDS` > `DEFAULT_TEMPLATE_ID` > all active templates. A template that fails
+`PLAN_TEMPLATE_IDS` > `DEFAULT_TEMPLATE_ID` > all active templates. Only the
+sender of a row gets its deck; the reference and current snapshot come from the recipient
+row, so a poller run and a manual run of the same row are identical. A template that fails
 to plan is reported in `errors` without blocking the others; if all fail, or the output
 would exceed the Step Functions payload limit, the plan Lambda raises before any side
 effect. `pptcreator.lambda_handler.plan_handler`/`render_handler`/`record_handler` remain
@@ -75,8 +77,8 @@ DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_
 | `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `email_subject` |
 | `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` |
 | `T_Control_Autoreport_Brands` | brand master list (frontend dropdown) | `brand_name` (display), `filter_value` (`EK_ORG` value), `is_active` |
-| `T_Control_Autoreport_Recipients` | one row per deck a user wants | `template_id`, `email`, `brand_id` (FK Brands), `reference_year` + `reference_week` (ISO, **mandatory**, no default), `send_now`, `is_active`; unique per (email, template, brand, reference week). Same brand with several weeks = several decks; rows with identical (template, brand, week) share one deck |
-| `T_Control_Autoreport_Runs` | audit log | `run_id`, `brand`, periods, `status` (`queued`/`rendered`/`sent`/`failed`), `s3_key`, `message_id`, `error` |
+| `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_id` (FK Brands), `primary_date` + `reference_date` (AnalyseZeitpunkt strings, e.g. `2025-11-28`, **mandatory**, passed to the KPI source unvalidated), `send_now`, `last_edited_at`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and dates; two rows with the same brand and dates write the same file name (later overwrites earlier) |
+| `T_Control_Autoreport_Runs` | audit log and the claim that prevents double sends | `run_id`, `template_id`, `user_email`, `recipient_id`, `brand`, `primary_date`, `reference_date`, `status` (`processing`/`rendered`/`sent`/`skipped`/`failed`), `s3_key`, `message_id`, `error` |
 
 Data sources per KPI:
 

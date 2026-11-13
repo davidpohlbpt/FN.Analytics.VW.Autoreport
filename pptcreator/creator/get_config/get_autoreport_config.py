@@ -257,26 +257,40 @@ def _parse_palette(raw, mapping_id) -> dict[str, str]:
 
 @dataclasses.dataclass
 class RecipientGroup:
+    """One recipient row = one deck. ``emails`` holds the single row's address."""
+
     template_id: int
     brand: str
     """Brand filter value (EK_ORG), used for the data query, file name and headlines"""
-    reference_period: ReportPeriod
+    primary_date: str
+    """Current snapshot as stored by the frontend, e.g. '2025-11-28'"""
+    reference_date: str
+    """Comparison snapshot as stored by the frontend"""
     emails: list[str]
     recipient_ids: list[int]
 
+    @property
+    def current_period(self) -> ReportPeriod:
+        return ReportPeriod.parse(self.primary_date)
+
+    @property
+    def reference_period(self) -> ReportPeriod:
+        return ReportPeriod.parse(self.reference_date)
+
 
 RECIPIENT_COLUMNS = [
-    "id", "template_id", "email", "brand_id", "reference_year", "reference_week", "send_now", "brand",
+    "id", "template_id", "email", "brand_id", "primary_date", "reference_date", "send_now", "brand",
 ]
 
 
 def read_recipients(template_id: int, *, only_send_now: bool = False) -> pd.DataFrame:
-    """Active recipient rows of a template joined with their active brand.
+    """Recipient rows of a template joined with their active brand.
 
     Adds a ``brand`` column holding the brand's ``filter_value``. Rows whose brand is
-    unknown or inactive are dropped with a warning.
+    unknown or inactive are dropped with a warning. The table has no ``is_active``
+    column any more; ``send_now`` is the only trigger.
     """
-    columns, values = ["template_id", "is_active"], [template_id, True]
+    columns, values = ["template_id"], [template_id]
     if only_send_now:
         columns.append("send_now")
         values.append(True)
@@ -298,21 +312,30 @@ def read_recipients(template_id: int, *, only_send_now: bool = False) -> pd.Data
     return data[data["brand"].notna()]
 
 
+def period_of(row: dict, column: str) -> ReportPeriod:
+    """Snapshot date of a recipient row -> ReportPeriod. Mandatory, not validated.
+
+    The frontend guarantees the values exist in the data; the KPI source resolves them
+    (and reports a clear error if a snapshot is missing).
+    """
+    value = _str_or_none(row.get(column))
+    if not value:
+        raise ValueError(f"{column} is mandatory.")
+    return ReportPeriod.parse(value)
+
+
 def reference_period_of(row: dict) -> ReportPeriod:
-    """ISO year + week of a recipient row -> ReportPeriod. Both are mandatory."""
-    year, week = _int_or_none(row.get("reference_year")), _int_or_none(row.get("reference_week"))
-    if year is None or week is None:
-        raise ValueError("reference week is mandatory (reference_year and reference_week).")
-    try:
-        dt.date.fromisocalendar(year, week, 1)
-    except ValueError as exc:
-        raise ValueError(f"invalid reference week {year}-KW{week:02d} ({exc}).") from exc
-    return ReportPeriod.parse(f"{year}-KW{week:02d}")
+    """Backwards compatible name for the comparison date of a recipient row."""
+    return period_of(row, "reference_date")
 
 
 def group_recipients(recipients: pd.DataFrame, template_id: int) -> list[RecipientGroup]:
-    """One group per (brand, reference period). Rows with bad data are skipped with a warning."""
-    groups: dict[tuple[str, str], RecipientGroup] = {}
+    """One group (= one deck) per recipient row; rows with bad data are skipped.
+
+    Deliberately no merging: two rows with the same brand and dates still produce two
+    decks, so each user's row keeps its own history and file name.
+    """
+    groups: list[RecipientGroup] = []
     for row in recipients.to_dict("records"):
         email = _str_or_none(row.get("email"))
         brand = _str_or_none(row.get("brand"))
@@ -320,18 +343,25 @@ def group_recipients(recipients: pd.DataFrame, template_id: int) -> list[Recipie
             logging.warning(f"Recipient {row.get('id')} skipped: missing email or brand.")
             continue
         try:
-            reference = reference_period_of(row)
+            primary = period_of(row, "primary_date")
+            reference = period_of(row, "reference_date")
         except ValueError as exc:
             logging.warning(f"Recipient {row.get('id')} skipped: {exc}")
             continue
-        key = (brand, str(reference))
-        group = groups.setdefault(
-            key, RecipientGroup(template_id, brand, reference, [], [])
+        if primary == reference:
+            logging.warning(f"Recipient {row.get('id')} skipped: primary_date and reference_date are identical ({primary}).")
+            continue
+        groups.append(
+            RecipientGroup(
+                template_id=template_id,
+                brand=brand,
+                primary_date=str(primary),
+                reference_date=str(reference),
+                emails=[email],
+                recipient_ids=[int(row["id"])],
+            )
         )
-        if email.lower() not in [e.lower() for e in group.emails]:
-            group.emails.append(email)
-        group.recipient_ids.append(int(row["id"]))
-    return list(groups.values())
+    return groups
 
 
 # ------------------------------------------------------------------------------ #

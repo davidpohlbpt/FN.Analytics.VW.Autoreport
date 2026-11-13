@@ -137,22 +137,20 @@ def plan_decks(
     here; the caller (planner Lambda) does that once the requests were handed over.
     """
     template = template or get_template_config(template_id)
-    current = ReportPeriod.parse(current_period or current_calendar_week())
     run_id = run_id or str(uuid.uuid4())
 
     recipients = read_recipients(template.id, only_send_now=(trigger == "adhoc"))
     groups = group_recipients(recipients, template.id)
-    logging.info(f"{trigger}: {len(recipients)} recipient rows -> {len(groups)} group(s) for template {template.id}")
+    logging.info(f"{trigger}: {len(recipients)} recipient rows -> {len(groups)} deck(s) for template {template.id}")
 
     requests: list[ReportRequest] = []
     for group in groups:
-        reference = group.reference_period
         try:
             requests.append(
                 ReportRequest.create(
                     brand=group.brand,
-                    current_period=current,
-                    reference_period=reference,
+                    current_period=group.current_period,
+                    reference_period=group.reference_period,
                     recipients=group.emails,
                     template_id=template.id,
                     run_id=run_id,
@@ -161,7 +159,7 @@ def plan_decks(
                 )
             )
         except ValueError as exc:
-            logging.warning(f"Group {group.brand}/{reference} skipped: {exc}")
+            logging.warning(f"Recipient {group.recipient_ids} skipped: {exc}")
     return requests
 
 

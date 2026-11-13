@@ -52,34 +52,39 @@ CREATE TABLE control.T_Control_Autoreport_Brands (
 );
 GO
 
--- One row per deck a user wants. The same email/template/brand may appear several
--- times with different reference weeks. The reference week is mandatory.
+-- One row per deck a user wants, maintained by the frontend. The two snapshot dates are
+-- AnalyseZeitpunkt values (YYYY-MM-DD); send_now = 1 is the only trigger of a deck and is
+-- cleared by the record Lambda once the mail left, or by the frontend.
 IF OBJECT_ID('control.T_Control_Autoreport_Recipients', 'U') IS NULL
 CREATE TABLE control.T_Control_Autoreport_Recipients (
     id             INT IDENTITY(1,1) PRIMARY KEY,
     template_id    INT           NOT NULL REFERENCES control.T_Control_Autoreport_Templates(id),
-    email          NVARCHAR(500) NOT NULL,
+    email          NVARCHAR(1000) NOT NULL,
     brand_id       INT           NOT NULL REFERENCES control.T_Control_Autoreport_Brands(id),
-    reference_year INT           NOT NULL,   -- ISO year
-    reference_week INT           NOT NULL CONSTRAINT CK_Autoreport_Recipients_Week CHECK (reference_week BETWEEN 1 AND 53),
+    primary_date   NVARCHAR(30)  NOT NULL,   -- current snapshot,    e.g. 2025-11-28
+    reference_date NVARCHAR(30)  NOT NULL,   -- comparison snapshot, e.g. 2025-10-28
     send_now       BIT           NULL CONSTRAINT DF_Autoreport_Recipients_SendNow DEFAULT 0,
-    is_active      BIT           NULL CONSTRAINT DF_Autoreport_Recipients_Active DEFAULT 1,
-    last_edited_at DATETIME2     NULL,
-    CONSTRAINT UQ_Autoreport_Recipients UNIQUE (email, template_id, brand_id, reference_year, reference_week)
+    last_edited_at DATETIME2     NULL
 );
+GO
+CREATE INDEX IX_Autoreport_Recipients_SendNow
+    ON control.T_Control_Autoreport_Recipients (send_now, template_id) WHERE send_now = 1;
 GO
 
 IF OBJECT_ID('control.T_Control_Autoreport_Runs', 'U') IS NULL
 CREATE TABLE control.T_Control_Autoreport_Runs (
     id               INT IDENTITY(1,1) PRIMARY KEY,
-    run_id           NVARCHAR(100)  NOT NULL,
+    run_id           NVARCHAR(100)  NOT NULL,   -- one UUID per plan invocation
     template_id      INT            NOT NULL,
+    user_email       NVARCHAR(1000) NULL,       -- email of the recipient row
+    recipient_id     INT            NULL,       -- T_Control_Autoreport_Recipients.id; open claim while 'processing'
     brand            NVARCHAR(200)  NOT NULL,
-    current_period   NVARCHAR(50)   NOT NULL,
-    reference_period NVARCHAR(50)   NOT NULL,
-    recipients       NVARCHAR(4000) NOT NULL,
-    trigger          NVARCHAR(20)   NOT NULL,
-    status           NVARCHAR(20)   NOT NULL,   -- queued | rendered | sent | failed
+    primary_date     NVARCHAR(30)   NULL,       -- current snapshot of the deck
+    reference_date   NVARCHAR(30)   NULL,       -- comparison snapshot of the deck
+    current_period   NVARCHAR(50)   NULL,       -- legacy column, older rows only
+    reference_period NVARCHAR(50)   NULL,       -- legacy column, older rows only
+    [trigger]        NVARCHAR(20)   NOT NULL,
+    status           NVARCHAR(20)   NOT NULL,   -- processing | rendered | sent | skipped | failed
     s3_key           NVARCHAR(1000) NULL,
     message_id       NVARCHAR(200)  NULL,
     error            NVARCHAR(4000) NULL,
@@ -87,4 +92,6 @@ CREATE TABLE control.T_Control_Autoreport_Runs (
     updated_at       DATETIME2      NULL
 );
 CREATE INDEX IX_Autoreport_Runs_RunId ON control.T_Control_Autoreport_Runs (run_id);
+CREATE INDEX IX_Autoreport_Runs_OpenClaim ON control.T_Control_Autoreport_Runs (recipient_id)
+    WHERE status = 'processing';
 GO

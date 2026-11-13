@@ -35,7 +35,8 @@ def handler(event, context):
         request.run_id,
         request.brand,
         str(request.reference_period),
-        status=result.status,
+        status="rendered" if result.status == "rendered" else "failed",
+        recipient_id=request.recipient_id,
         s3_key=result.s3_key,
         error=result.error,
     )

@@ -214,21 +214,15 @@ class AutoreportBrands(DeclarativeBase):
 
 
 class AutoreportRecipients(DeclarativeBase):
-    """One row per deck a user wants: template + brand + reference week.
+    """One row per deck a user wants: template + brand + two snapshot dates.
 
-    The same e-mail may appear several times for the same template and brand with
-    different reference weeks; each row yields its own deck (identical ones are merged).
+    The frontend maintains this table; the ``send_now`` flag is the only trigger of a
+    deck. Dates are the frontend's own strings (``YYYY-MM-DD`` = AnalyseZeitpunkt) and
+    are passed through unvalidated to the KPI source.
     """
 
     __tablename__ = "T_Control_Autoreport_Recipients"
-    __table_args__ = (
-        sa.UniqueConstraint(
-            "email", "template_id", "brand_id", "reference_year", "reference_week",
-            name="UQ_Autoreport_Recipients",
-        ),
-        sa.CheckConstraint("reference_week BETWEEN 1 AND 53", name="CK_Autoreport_Recipients_Week"),
-        {"schema": AUTOREPORT_SCHEMA, "extend_existing": True},
-    )
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
@@ -236,22 +230,20 @@ class AutoreportRecipients(DeclarativeBase):
         sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Templates.id")
     )
 
-    email: Mapped[str] = mapped_column(sa.String(500))
+    email: Mapped[str] = mapped_column(sa.String(1000))
 
     brand_id: Mapped[int] = mapped_column(
         sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Brands.id")
     )
 
-    reference_year: Mapped[int]
-    """ISO year of the reference week (mandatory)"""
+    primary_date: Mapped[str] = mapped_column(sa.String(30))
+    """Current snapshot, e.g. '2025-11-28' (AnalyseZeitpunkt), mandatory"""
 
-    reference_week: Mapped[int]
-    """ISO week 1-53 of the reference week (mandatory)"""
+    reference_date: Mapped[str] = mapped_column(sa.String(30))
+    """Comparison snapshot, e.g. '2025-10-28', mandatory"""
 
     send_now: Mapped[bool | None] = mapped_column(default=False)
-    """Ad hoc request flag set by the frontend; cleared by the planner when picked up"""
-
-    is_active: Mapped[bool | None] = mapped_column(default=True)
+    """Set by the frontend; cleared by the record step once the mail was sent"""
 
     last_edited_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)
 
@@ -267,17 +259,24 @@ class AutoreportRuns(DeclarativeBase):
     """UUID shared by all decks of one planner invocation"""
 
     template_id: Mapped[int]
+    user_email: Mapped[str | None] = mapped_column(sa.String(1000))
+    """E-mail of the requesting recipient row"""
+    recipient_id: Mapped[int | None]
+    """Row id in T_Control_Autoreport_Recipients; also the claim that prevents double sends"""
+
     brand: Mapped[str] = mapped_column(sa.String(200))
-    current_period: Mapped[str] = mapped_column(sa.String(50))
-    reference_period: Mapped[str] = mapped_column(sa.String(50))
-    recipients: Mapped[str] = mapped_column(sa.String(4000))
-    """Semicolon separated"""
+    primary_date: Mapped[str | None] = mapped_column(sa.String(30))
+    reference_date: Mapped[str | None] = mapped_column(sa.String(30))
+    current_period: Mapped[str | None] = mapped_column(sa.String(50))
+    """Legacy column, kept for older rows"""
+    reference_period: Mapped[str | None] = mapped_column(sa.String(50))
+    """Legacy column, kept for older rows"""
 
     trigger: Mapped[str] = mapped_column(sa.String(20))
-    """'scheduled' | 'adhoc' | 'manual'"""
+    """'adhoc' | 'scheduled' | 'manual'"""
 
     status: Mapped[str] = mapped_column(sa.String(20))
-    """'queued' | 'rendered' | 'sent' | 'failed'"""
+    """'processing' (claim) | 'rendered' | 'sent' | 'skipped' | 'failed'"""
 
     s3_key: Mapped[str | None] = mapped_column(sa.String(1000))
     message_id: Mapped[str | None] = mapped_column(sa.String(200))

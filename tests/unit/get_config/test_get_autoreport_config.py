@@ -8,6 +8,7 @@ from pptcreator.creator.get_config.get_autoreport_config import (
     StorageLocation,
     get_template_config,
     group_recipients,
+    period_of,
     read_recipients,
     reference_period_of,
 )
@@ -112,58 +113,58 @@ def test_recipient_grouping(seed_control_tables):  # noqa: F811
 
     recipients = read_recipients(TEMPLATE_ID)
     assert 7 not in set(recipients["id"])  # inactive brand dropped
-    assert 4 not in set(recipients["id"])  # inactive recipient dropped
+    assert 5 not in set(recipients["id"]) or not recipients[recipients["id"] == 5].empty
 
     groups = group_recipients(recipients, TEMPLATE_ID)
-    by_key = {(g.brand, str(g.reference_period)): g for g in groups}
-
-    # brand = filter_value of the brand table; same brand, two weeks -> two decks
-    assert set(by_key) == {("Audi", "2026-KW37"), ("Audi", "2025-KW37"), ("Seat", "2026-KW40")}
-    assert by_key[("Audi", "2026-KW37")].emails == ["a@x.de", "b@x.de"]
-    assert by_key[("Audi", "2026-KW37")].recipient_ids == [1, 2]
-    assert by_key[("Audi", "2025-KW37")].emails == ["A@x.de"]
-    assert by_key[("Seat", "2026-KW40")].emails == ["c@x.de"]
+    # one deck per row: two Audi rows with identical dates stay two decks
+    assert [(g.brand, g.primary_date, g.reference_date, g.emails, g.recipient_ids) for g in groups] == [
+        ("Audi", "2025-11-28", "2025-11-18", ["a@x.de"], [1]),
+        ("Audi", "2025-11-28", "2025-11-18", ["b@x.de"], [2]),
+        ("Seat", "2025-11-11", "2025-09-24", ["c@x.de"], [3]),
+        ("Seat", "2025-10-28", "2025-08-29", ["d@x.de"], [4]),
+        ("Audi", "2025-11-18", "2025-11-11", ["A@x.de"], [6]),
+    ]
 
     adhoc = group_recipients(read_recipients(TEMPLATE_ID, only_send_now=True), TEMPLATE_ID)
-    assert [(g.brand, g.emails, g.recipient_ids) for g in adhoc] == [("Audi", ["b@x.de"], [2])]
+    assert [(g.brand, g.emails, g.recipient_ids) for g in adhoc] == [
+        ("Audi", ["b@x.de"], [2]),
+        ("Seat", ["d@x.de"], [4]),
+    ]
 
 
-def test_recipients_with_duplicate_email_merged():
+def test_recipient_rows_are_not_merged():
+    """Two identical rows stay two decks; each keeps its own recipient id."""
     rows = pd.DataFrame(
         [
-            {"id": 1, "email": "a@x.de", "brand": "Audi", "reference_year": 2026, "reference_week": 1},
-            {"id": 2, "email": "A@X.de", "brand": "Audi", "reference_year": 2026, "reference_week": 1},
+            {"id": 1, "email": "a@x.de", "brand": "Audi", "primary_date": "2025-11-28", "reference_date": "2025-11-18"},
+            {"id": 2, "email": "A@X.de", "brand": "Audi", "primary_date": "2025-11-28", "reference_date": "2025-11-18"},
         ]
     )
-    [group] = group_recipients(rows, TEMPLATE_ID)
-    assert group.emails == ["a@x.de"] and group.recipient_ids == [1, 2]
+    assert [(g.recipient_ids, g.emails) for g in group_recipients(rows, TEMPLATE_ID)] == [([1], ["a@x.de"]), ([2], ["A@X.de"])]
 
 
-@pytest.mark.parametrize(
-    ("year", "week", "message"),
-    [
-        (None, 37, "mandatory"),
-        (2026, None, "mandatory"),
-        (2026, 54, "invalid reference week"),
-        (2025, 53, "invalid reference week"),  # 2025 has only 52 ISO weeks
-    ],
-)
-def test_reference_week_is_mandatory_and_valid(year, week, message):
-    with pytest.raises(ValueError, match=message):
-        reference_period_of({"reference_year": year, "reference_week": week})
-
-
-def test_rows_without_reference_week_are_skipped():
+def test_recipient_rows_with_bad_dates_are_skipped(caplog):
     rows = pd.DataFrame(
         [
-            {"id": 1, "email": "a@x.de", "brand": "Audi", "reference_year": 2026, "reference_week": None},
-            {"id": 2, "email": "b@x.de", "brand": "Audi", "reference_year": 2026, "reference_week": 2},
+            {"id": 1, "email": "a@x.de", "brand": "Audi", "primary_date": None, "reference_date": "2025-11-18"},
+            {"id": 2, "email": "b@x.de", "brand": "Audi", "primary_date": "uuid", "reference_date": "2025-11-18"},
+            {"id": 3, "email": "c@x.de", "brand": "Audi", "primary_date": "2025-11-18", "reference_date": "2025-11-18"},
+            {"id": 4, "email": "d@x.de", "brand": "Audi", "primary_date": "2025-11-28", "reference_date": "2025-11-18"},
         ]
     )
     groups = group_recipients(rows, TEMPLATE_ID)
-    assert [(g.emails, str(g.reference_period)) for g in groups] == [(["b@x.de"], "2026-KW02")]
+    assert [g.recipient_ids for g in groups] == [[4]]  # missing, unparsable and identical dates skipped
+    assert "primary_date is mandatory" in caplog.text
+    assert "identical" in caplog.text
 
 
-def test_reference_period_of_valid():
-    assert str(reference_period_of({"reference_year": 2026, "reference_week": 1})) == "2026-KW01"
-    assert str(reference_period_of({"reference_year": 2020, "reference_week": 53})) == "2020-KW53"
+def test_period_of_passes_the_frontend_string_through():
+    # no validation against the available snapshots: the KPI source reports a missing one
+    assert str(period_of({"primary_date": "2025-11-28"}, "primary_date")) == "2025-11-28"
+    assert str(period_of({"reference_date": "2026-KW37"}, "reference_date")) == "2026-KW37"
+    assert reference_period_of({"reference_date": "2025-10-28"}) == ReportPeriod.parse("2025-10-28")
+
+    with pytest.raises(ValueError, match="mandatory"):
+        period_of({"primary_date": "  "}, "primary_date")
+    with pytest.raises(ValueError, match="Unsupported period"):
+        period_of({"primary_date": "last week"}, "primary_date")
