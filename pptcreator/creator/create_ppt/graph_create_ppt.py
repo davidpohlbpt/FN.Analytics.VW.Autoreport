@@ -10,6 +10,7 @@ from pptcreator.creator.create_ppt.create_charts import create_charts
 from pptcreator.creator.create_ppt.create_legend import create_legend
 from pptcreator.creator.create_ppt.create_slide_headline import create_slide_headline
 from pptcreator.creator.create_ppt.create_slide_subtitle import create_slide_subtitle
+from pptcreator.creator.create_ppt.create_text_fields import create_text_fields
 from pptcreator.creator.create_ppt.create_totals import create_totals
 from pptcreator.creator.create_ppt.delete_template_slide import delete_template_slide
 from pptcreator.models.enum import ChartObjects
@@ -58,7 +59,8 @@ def _create_filter_slides(prs, config_dict: dict):
 
 def _create_output_slides(prs, config_dict: dict):
     """One output slide per configured slide; template slides can repeat, e.g. per KPI."""
-    template_layouts = [slide.slide_layout for slide in prs.slides]
+    template_slides = list(prs.slides)
+    template_layouts = [slide.slide_layout for slide in template_slides]
 
     for output_slide in config_dict["output_slides"]:
         template_index = output_slide["template_slide"]
@@ -80,6 +82,9 @@ def _create_output_slides(prs, config_dict: dict):
         prs = _populate_slide(prs, new_slide, slide_view, None)
         prs = create_legend(
             prs, new_slide, slide_view, config_dict["template_slides"][template_index]
+        )
+        create_text_fields(
+            new_slide, template_slides[template_index], output_slide.get("text_values", {})
         )
 
     return prs

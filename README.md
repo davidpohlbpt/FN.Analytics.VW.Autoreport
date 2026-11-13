@@ -180,8 +180,9 @@ tests are written to `tests/result/` for visual inspection.
   automatically (never committed).
 - `deployment/template.yaml` -- SAM stack: Lambda in VPC, S3 bucket, EventBridge weekly
   rule (disabled by default), IAM, log group. Secrets are resolved from Secrets Manager.
-- `.github/workflows/deploy.yml` -- test, build, push to ECR, `sam deploy` (`main` -> dev,
-  tags `v*` -> prod), upload the template to the bucket.
+- `.github/workflows/deploy.yml` -- PRs and pushes to `main` run tests only. Tags `v*`
+  and manual runs also build, push to ECR, `sam deploy`, and upload the template to
+  the bucket (branches -> dev, tags `v*` -> prod).
 
 After changing dependencies: `poetry lock`, then `python deployment/export_requirements.py`.
 After a pycore update: see `vendor/README.md`.
@@ -217,4 +218,7 @@ docker push <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
   `"<object> Box"`, `"<object> Total"`; a shape named exactly `Legend` is the slide legend.
 - Template slide 1 must hold exactly two charts (reference, current); template slide 2
   holds the commodity slots and is repeated when a brand has more commodities than slots.
-- `Status` and `Targets` shapes in the template are currently not rendered.
+- Other non-empty text boxes (e.g. `Targets` and the data source line) are copied as is,
+  with `{brand}`, `{week}` (current week), `{laufkennung}` (fixed `V11` for now) and
+  `{target_label1|2}` / `{target_text1|2}` (empty for now) filled in. Unknown
+  placeholders stay visible. Empty boxes such as `Chart 2 Status` are not rendered.

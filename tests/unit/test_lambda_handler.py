@@ -116,6 +116,10 @@ def test_render_handler_end_to_end(stack):
     texts = [s.text_frame.text for s in first.shapes if s.has_text_frame]
     assert any(t.startswith("KW37 – Audi") for t in texts)
     assert any(t.startswith("KW45 – Audi") for t in texts)
+    for slide in (first, prs.slides[1]):
+        texts = [s.text_frame.text for s in slide.shapes if s.has_text_frame]
+        assert "Target – Marke Audi\n \n " in texts
+        assert "IDM, Filterung auf Einkaufsorganisation Audi, alle BKAs, KW45, V11 " in texts
     assert prs.slides[1].shapes.title.text == f"{KPIS[0].title} (1/2)"
     assert len([s for s in prs.slides[1].shapes if s.has_chart]) == 5  # 10 commodities -> 5 + 5
     assert len([s for s in prs.slides[2].shapes if s.has_chart]) == 5

@@ -23,6 +23,9 @@ from pptcreator.models.enum import ChartObjects, ChartType
 OVERVIEW_SLIDE = 0
 DETAIL_SLIDE = 1
 
+# Fixed until the run identifier comes from the KPI source
+LAUFKENNUNG = "V11"
+
 
 def _natural_key(name: str):
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
@@ -68,8 +71,12 @@ def build_output_slides(
     output_slides: list[dict] = []
     for result in results:
         result.validate()
-        output_slides.append(_overview_slide(result, overview_slots, show_data_labels))
-        output_slides.extend(_detail_slides(result, detail_slots, per_slide, show_data_labels))
+        text_values = _text_values(result)
+        slides = [_overview_slide(result, overview_slots, show_data_labels)]
+        slides.extend(_detail_slides(result, detail_slots, per_slide, show_data_labels))
+        for slide in slides:
+            slide["text_values"] = text_values
+        output_slides.extend(slides)
 
     logging.info(f"Built {len(output_slides)} output slides for {len(results)} KPI(s).")
     return output_slides
@@ -108,6 +115,19 @@ def _week(period: ReportPeriod, *, short: bool = False) -> str:
         match = re.search(r"KW\d{2}", label)
         return match.group(0) if match else label
     return label
+
+
+def _text_values(result: KpiResult) -> dict[str, str]:
+    """Placeholders of the template's 'Targets' box and data source line."""
+    return {
+        "brand": result.brand,
+        "week": _week(result.current.period),
+        "laufkennung": LAUFKENNUNG,
+        "target_label1": "",
+        "target_text1": "",
+        "target_label2": "",
+        "target_text2": "",
+    }
 
 
 def _total_text(rows: Rows) -> str:
