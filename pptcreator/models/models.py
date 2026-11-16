@@ -213,6 +213,64 @@ class AutoreportBrands(DeclarativeBase):
     is_active: Mapped[bool] = mapped_column(default=True)
 
 
+class AutoreportBrandCommodities(DeclarativeBase):
+    """Commodity presentation per brand: which COMs, which labels, which order.
+
+    A brand without active rows keeps the default behaviour (all COMs the source returns,
+    source labels, source order, COMs with an all-zero distribution skipped). Rows turn the
+    brand into an explicit whitelist: only ``com_source`` values are shown, renamed to
+    ``com_label``, ordered by ``sort_order``, and zero-valued COMs are kept when
+    ``show_if_zero`` is set.
+    """
+
+    __tablename__ = "T_Control_Autoreport_BrandCommodities"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    brand_id: Mapped[int] = mapped_column(
+        sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Brands.id")
+    )
+
+    com_source: Mapped[str] = mapped_column(sa.String(50))
+    """Value in T_RESULT_Leitstand_Overview.COM, e.g. 'BP'"""
+
+    com_label: Mapped[str] = mapped_column(sa.String(50))
+    """Label shown in the chart headline, e.g. 'CB'"""
+
+    sort_order: Mapped[int] = mapped_column(default=0)
+    """Position on the detail slide (ascending)"""
+
+    show_if_zero: Mapped[bool] = mapped_column(default=True)
+    """Keep the chart when the COM has no data or only zeros"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class AutoreportBrandFeatures(DeclarativeBase):
+    """Free-form per-brand switches, so a brand quirk needs no schema change.
+
+    A brand without an active row for a key falls back to the feature's default (off).
+    """
+
+    __tablename__ = "T_Control_Autoreport_BrandFeatures"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    brand_id: Mapped[int] = mapped_column(
+        sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Brands.id")
+    )
+
+    feature_key: Mapped[str] = mapped_column(sa.String(50))
+    """e.g. 'footnote_text'"""
+
+    feature_value: Mapped[str] = mapped_column(sa.String(200))
+    """Text/render value of the feature, e.g. the footnote sentence"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
 class AutoreportRecipients(DeclarativeBase):
     """One row per deck a user wants: template + brand + two snapshot dates.
 

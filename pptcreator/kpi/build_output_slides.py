@@ -60,6 +60,7 @@ def build_output_slides(
     template_slots: dict[int, list[str]],
     charts_per_detail_slide: int | None = None,
     show_data_labels: bool | None = None,
+    brand_policy: "BrandPolicy | None" = None,
 ) -> list[dict]:
     validate_template_slots(template_slots)
     overview_slots = template_slots[OVERVIEW_SLIDE]
@@ -71,7 +72,7 @@ def build_output_slides(
     output_slides: list[dict] = []
     for result in results:
         result.validate()
-        text_values = _text_values(result)
+        text_values = _text_values(result, brand_policy)
         slides = [_overview_slide(result, overview_slots, show_data_labels)]
         slides.extend(_detail_slides(result, detail_slots, per_slide, show_data_labels))
         for slide in slides:
@@ -117,12 +118,17 @@ def _week(period: ReportPeriod, *, short: bool = False) -> str:
     return label
 
 
-def _text_values(result: KpiResult) -> dict[str, str]:
-    """Placeholders of the template's 'Targets' box and data source line."""
+def _text_values(result: KpiResult, brand_policy: "BrandPolicy | None" = None) -> dict[str, str]:
+    """Placeholders of the template's 'Targets' box, data source line and footnote.
+
+    ``footnote`` is always present: an empty string blanks the token, so brands without a
+    footnote row never show a literal ``{footnote}`` on the slide.
+    """
     return {
         "brand": result.brand,
         "week": _week(result.current.period),
         "laufkennung": LAUFKENNUNG,
+        "footnote": brand_policy.footnote_text if brand_policy else "",
         "target_label1": "",
         "target_text1": "",
         "target_label2": "",

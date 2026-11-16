@@ -1,12 +1,3 @@
-# Lambda container image for the VW Autoreport.
-#
-# Build (from the repository root):
-#   docker build -f deployment/Dockerfile -t vw-autoreport .
-#
-# No network credentials are needed at build time: the internal pycore package is
-# vendored as a wheel in ./vendor and all other dependencies are pinned in
-# requirements-docker.txt (generated from poetry.lock, see README).
-
 FROM public.ecr.aws/lambda/python:3.12
 
 WORKDIR ${LAMBDA_TASK_ROOT}

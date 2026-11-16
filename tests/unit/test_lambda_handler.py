@@ -20,10 +20,19 @@ from pptcreator.config import settings
 from pptcreator.creator.graph_steer_creation_process import current_calendar_week
 from pptcreator.kpi.registry import KPIS
 from pptcreator.lambdas import plan
-from pptcreator.models.models import AutoreportRecipients, AutoreportRuns, AutoreportTemplates
+from pptcreator.models.models import (
+    AutoreportBrandCommodities,
+    AutoreportBrandFeatures,
+    AutoreportBrands,
+    AutoreportRecipients,
+    AutoreportRuns,
+    AutoreportTemplates,
+)
 from pptcreator.utils.read_data import read_data
 from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables  # noqa: F401
 from tests.unit.infra.conftest import BUCKET, aws  # noqa: F401
+
+VW_PKW_ID = 42
 
 TEMPLATE = Path(__file__).resolve().parent / "test_data" / "VW_Template_Overview.pptx"
 RESULT_DIR = Path(__file__).resolve().parents[1] / "result"
@@ -201,8 +210,11 @@ def test_render_handler_end_to_end(stack):
     assert any(t.startswith("KW45 – Audi") for t in texts)
     for slide in (first, prs.slides[1]):
         texts = [s.text_frame.text for s in slide.shapes if s.has_text_frame]
-        assert "Target – Marke Audi\n \n " in texts
         assert "IDM, Filterung auf Einkaufsorganisation Audi, alle BKAs, KW45, V11 " in texts
+    # Audi has no footnote row -> the template's {footnote} shape is not copied at all
+    for slide in prs.slides:
+        texts = [s.text_frame.text for s in slide.shapes if s.has_text_frame]
+        assert not any("{footnote}" in t for t in texts)
     assert prs.slides[1].shapes.title.text == f"{KPIS[0].title} (1/2)"
     assert len([s for s in prs.slides[1].shapes if s.has_chart]) == 5  # 10 commodities -> 5 + 5
     assert len([s for s in prs.slides[2].shapes if s.has_chart]) == 5
@@ -217,7 +229,6 @@ def test_render_handler_kpi_subset(stack):
         None,
     )
     assert out["slides"] == 2  # Seat: 7 commodities -> one detail slide
-
 
 def test_render_handler_output_bucket_env_overrides_template_row(stack, monkeypatch):
     stack["s3"].create_bucket(Bucket="client-output", CreateBucketConfiguration={"LocationConstraint": "eu-central-1"})
@@ -248,6 +259,86 @@ def test_render_handler_missing_template_in_s3(stack):
         lambda_handler.render_handler(
             {"template_id": TEMPLATE_ID, "brand": "Audi", "current_period": "KW45", "reference_period": "KW37"}, None
         )
+
+
+def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F811
+    """The plan snapshot carries the policy, so render never re-reads the brand tables."""
+    data_repo.write_table(
+        model=AutoreportBrands,
+        df=pd.DataFrame(
+            [{"id": VW_PKW_ID, "brand_name": "Volkswagen PKW", "filter_value": "VW PKW", "is_active": True}]
+        ),
+    )
+    data_repo.write_table(
+        model=AutoreportBrandCommodities,
+        df=pd.DataFrame(
+            [
+                {
+                    "id": i,
+                    "brand_id": VW_PKW_ID,
+                    "com_source": source,
+                    "com_label": label,
+                    "sort_order": order,
+                    "show_if_zero": True,
+                    "is_active": True,
+                }
+                for i, (source, label, order) in enumerate(
+                    [("BC", "BC", 10), ("BI", "BI", 20), ("BM", "BM", 30), ("BN", "BN", 40),
+                     ("BX", "BX", 50), ("BP", "CB", 60), ("BL", "ZB", 70)],
+                    start=1,
+                )
+            ]
+        ),
+    )
+    data_repo.write_table(
+        model=AutoreportBrandFeatures,
+        df=pd.DataFrame(
+            [{"id": 1, "brand_id": VW_PKW_ID, "feature_key": "footnote_text", "feature_value": "Nur sieben COMs.", "is_active": True}]
+        ),
+    )
+    data_repo.write_table(
+        model=AutoreportRecipients,
+        df=pd.DataFrame(
+            [
+                {
+                    "id": 99,
+                    "template_id": TEMPLATE_ID,
+                    "email": "vw@example.com",
+                    "brand_id": VW_PKW_ID,
+                    "primary_date": "2025-11-28",
+                    "reference_date": "2025-11-18",
+                    "send_now": True,
+                    "last_edited_at": None,
+                }
+            ]
+        ),
+    )
+
+    planned = lambda_handler.plan_handler(
+        {"trigger": "adhoc", "template_id": TEMPLATE_ID, "recipient_ids": [99]},
+        None,
+    )
+    request = planned["requests"][0]
+    # kpi_ids is a render-time parameter; keep the test deck small
+    request["kpi_ids"] = ["bka_aktualisierung"]
+    assert request["brand_policy"]["features"]["footnote_text"] == "Nur sieben COMs."
+
+    # The brand tables are gone after planning: the snapshot must still drive the deck
+    with database.engine.begin() as con:
+        con.exec_driver_sql("DELETE FROM control.T_Control_Autoreport_BrandCommodities")
+        con.exec_driver_sql("DELETE FROM control.T_Control_Autoreport_BrandFeatures")
+
+    out = lambda_handler.render_handler(request, None)
+    assert out["status"] == "rendered"
+    assert out["slides"] == 2  # 7 configured commodities -> one detail slide
+
+    prs = _deck(stack, out["s3_key"])
+    detail_texts = [s.text_frame.text for s in prs.slides[1].shapes if s.has_text_frame]
+    assert "Nur sieben COMs." in detail_texts
+    assert sum(1 for s in prs.slides[1].shapes if s.has_chart) == 7
+    headlines = [t for t in detail_texts if t.startswith(("CB", "ZB", "BC", "BI", "BM", "BN", "BX"))]
+    assert any(t.startswith("CB") for t in headlines)
+    assert any(t.startswith("ZB") for t in headlines)
 
 
 # ------------------------------------------------------------------------------ #

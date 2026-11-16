@@ -34,6 +34,7 @@ from pptcreator.creator.get_config.graph_get_config import graph_get_config
 from pptcreator.creator.send_email.send_email import send_email
 from pptcreator.infra import s3_sync
 from pptcreator.kpi.base import KpiSource, ReportPeriod
+from pptcreator.kpi.brand_policy import load_brand_policy
 from pptcreator.kpi.router import RoutingKpiSource
 from pptcreator.models.models import Templates
 from pptcreator.utils.read_data import read_data
@@ -156,6 +157,8 @@ def plan_decks(
                     run_id=run_id,
                     trigger=trigger,
                     recipient_ids=group.recipient_ids,
+                    # Resolved once here so plan and render use the same presentation
+                    brand_policy=load_brand_policy(group.brand),
                 )
             )
         except ValueError as exc:

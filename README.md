@@ -70,13 +70,16 @@ Config Center) is still present and used by the older tests.
 
 ## Control tables (ReportDB, schema `control`)
 
-DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`.
+DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`,
+per-brand presentation in `004_brand_policy.sql`.
 
 | Table | Purpose | Key columns |
 |---|---|---|
 | `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `email_subject` |
 | `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` |
 | `T_Control_Autoreport_Brands` | brand master list (frontend dropdown) | `brand_name` (display), `filter_value` (`EK_ORG` value), `is_active` |
+| `T_Control_Autoreport_BrandCommodities` | per-brand commodity presentation | `brand_id` (FK Brands), `com_source` (`COM` in `T_RESULT_Leitstand_Overview`), `com_label` (headline label, enables renames), `sort_order`, `show_if_zero`, `is_active`. **No active rows for a brand ⇒ default behaviour** (all COMs, source labels/order, zeros skipped). Rows ⇒ whitelist + rename + order + zero-fill |
+| `T_Control_Autoreport_BrandFeatures` | per-brand feature switches | `brand_id` (FK Brands), `feature_key`, `feature_value` (`''` = explicitly off), `is_active`. **No active rows ⇒ feature off.** Supported key: `footnote_text` = text of the template's `{footnote}` token, so only that brand shows a footnote. Unknown keys are ignored with a warning |
 | `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_id` (FK Brands), `primary_date` + `reference_date` (AnalyseZeitpunkt strings, e.g. `2025-11-28`, **mandatory**, passed to the KPI source unvalidated), `send_now`, `last_edited_at`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and dates; two rows with the same brand and dates write the same file name (later overwrites earlier) |
 | `T_Control_Autoreport_Runs` | audit log and the claim that prevents double sends | `run_id`, `template_id`, `user_email`, `recipient_id`, `brand`, `primary_date`, `reference_date`, `status` (`processing`/`rendered`/`sent`/`skipped`/`failed`), `s3_key`, `message_id`, `error` |
 
@@ -187,6 +190,10 @@ PowerPoint (needs `pywin32`, dev only). `--current latest` uses the newest snaps
 `--reference previous` the snapshot before the current one; dates and weeks
 (`2025-KW46`) work as well.
 
+The brand policy (`T_Control_Autoreport_BrandCommodities` / `_BrandFeatures`) is applied
+whenever the tables exist; without them every brand keeps the default behaviour.
+`--no-brand-policy` skips it explicitly.
+
 With `S3_ENABLED=false` the template must exist in `<LOCAL_BLOB_DIR>/<storage_container>/`;
 with `MAIL_ENABLED=false` the deck is rendered but not sent. Rendered decks from the
 tests are written to `tests/result/` for visual inspection.
@@ -248,3 +255,8 @@ docker push <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
   with `{brand}`, `{week}` (current week), `{laufkennung}` (fixed `V11` for now) and
   `{target_label1|2}` / `{target_text1|2}` (empty for now) filled in. Unknown
   placeholders stay visible. Empty boxes such as `Chart 2 Status` are not rendered.
+- `{footnote}` holds the brand's `footnote_text` from
+  `control.T_Control_Autoreport_BrandFeatures`. It is always substituted: a brand without
+  the feature gets an empty string and the shape is removed from the output slide, so no
+  literal `{footnote}` and no empty text box ever reaches the deck. Put the token on the
+  slides the footnote should appear on; it is currently on slide 2 only.

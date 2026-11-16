@@ -1,6 +1,7 @@
 import pytest
 
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod
+from pptcreator.kpi.brand_policy import FEATURE_FOOTNOTE_TEXT, BrandPolicy
 from pptcreator.kpi.build_output_slides import (
     DETAIL_SLIDE,
     OVERVIEW_SLIDE,
@@ -116,6 +117,27 @@ def test_rows_are_in_palette_order():
     result.current.total_rows = [{"category": "b", "value": 2.0}, {"category": "a", "value": 1.0}]
     slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
     assert [r["category"] for r in slides[0]["charts"]["Chart 2"]["rows"]] == ["a", "b"]
+
+
+def test_footnote_text_comes_from_the_brand_policy():
+    footnote = "Nur BC, BI, BM, BN, BX, CB und ZB."
+    slides = build_output_slides(
+        [_result(["BC"])],
+        template_slots=TEMPLATE_SLOTS,
+        brand_policy=BrandPolicy(brand="VW PKW", features={FEATURE_FOOTNOTE_TEXT: footnote}),
+    )
+    assert {s["text_values"]["footnote"] for s in slides} == {footnote}
+
+
+def test_footnote_defaults_to_empty_string():
+    """Without a policy the token must be blanked, never left as a literal '{footnote}'."""
+    slides = build_output_slides([_result(["BC"])], template_slots=TEMPLATE_SLOTS)
+    assert {s["text_values"]["footnote"] for s in slides} == {""}
+
+    no_footnote = build_output_slides(
+        [_result(["BC"])], template_slots=TEMPLATE_SLOTS, brand_policy=BrandPolicy(brand="Audi")
+    )
+    assert {s["text_values"]["footnote"] for s in no_footnote} == {""}
 
 
 def test_unknown_category_is_rejected():
