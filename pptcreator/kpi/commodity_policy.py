@@ -18,8 +18,8 @@ import logging
 import pandas as pd
 
 from pptcreator.kpi.base import KpiResult, KpiSnapshot, Rows
-from pptcreator.kpi.control_tables import read_control_table_safe
 from pptcreator.models.models import AutoreportBrandCommodities, AutoreportBrands
+from pptcreator.utils.read_data import read_data
 
 
 @dataclasses.dataclass(frozen=True)
@@ -46,40 +46,6 @@ class CommodityPolicy:
         if len(sources) != len(set(sources)):
             raise ValueError(f"Duplicate commodity sources in the policy: {sources}.")
 
-    @property
-    def labels(self) -> list[str]:
-        return [e.label for e in self.entries]
-
-    def to_event(self) -> dict:
-        return {
-            "entries": [
-                {
-                    "source": e.source,
-                    "label": e.label,
-                    "order": e.order,
-                    "show_if_zero": e.show_if_zero,
-                }
-                for e in self.entries
-            ]
-        }
-
-    @classmethod
-    def from_event(cls, event: dict | None) -> CommodityPolicy | None:
-        """Rebuild the snapshot; ``None``/empty -> default behaviour."""
-        if not event or not event.get("entries"):
-            return None
-        return cls(
-            entries=tuple(
-                CommodityEntry(
-                    source=str(e["source"]),
-                    label=str(e["label"]),
-                    order=int(e.get("order") or 0),
-                    show_if_zero=bool(e.get("show_if_zero", True)),
-                )
-                for e in event["entries"]
-            )
-        )
-
     def apply_to_result(self, result: KpiResult) -> KpiResult:
         """Return a copy of ``result`` with the policy applied to both snapshots."""
         return dataclasses.replace(
@@ -99,7 +65,7 @@ class CommodityPolicy:
             if rows is None:
                 if not entry.show_if_zero:
                     continue
-                rows = _zero_rows(_categories(snapshot))
+                rows = _zero_rows(_categories(snapshot, entry))
             elif not entry.show_if_zero and not any(r["value"] for r in rows):
                 continue
 
@@ -114,9 +80,17 @@ class CommodityPolicy:
         )
 
 
-def _categories(snapshot: KpiSnapshot) -> list[str]:
-    """Category names of the brand total, i.e. every slice of the KPI's chart."""
-    return [str(list(row.values())[0]) for row in snapshot.total_rows]
+def _categories(snapshot: KpiSnapshot, entry: CommodityEntry) -> list[str]:
+    """Categories of a zero-filled commodity: the brand total's, else any known COM."""
+    if snapshot.total_rows:
+        return [str(list(row.values())[0]) for row in snapshot.total_rows]
+    if snapshot.commodity_rows:
+        first = next(iter(snapshot.commodity_rows.values()))
+        return [str(list(row.values())[0]) for row in first]
+    raise ValueError(
+        f"Commodity '{entry.source}' has no data and the KPI's categories are unknown; "
+        "cannot render a zero-filled chart."
+    )
 
 
 def _zero_rows(categories: list[str]) -> Rows:
@@ -128,18 +102,26 @@ def _zero_rows(categories: list[str]) -> Rows:
 # ------------------------------------------------------------------------------ #
 
 
-def load_commodity_policy(brand: str, engine=None) -> CommodityPolicy | None:
+def load_commodity_policy(brand: str) -> CommodityPolicy | None:
     """Commodity policy of one brand (``T_Control_Autoreport_Brands.filter_value``).
 
-    Returns ``None`` when the brand has no active rows, i.e. default behaviour.
-    ``engine`` is only needed outside the Lambdas (e.g. the local preview).
+    Returns ``None`` when the brand has no active rows, i.e. default behaviour. A
+    missing table means "not configured" as well, so the code can ship before the DDL.
     """
-    brand_id = _brand_id(brand, engine)
+    try:
+        return _load_commodity_policy(brand)
+    except Exception as exc:  # missing table on a stage without 004_brand_policy.sql
+        logging.warning(f"Could not read the commodity policy for {brand!r}: {exc}")
+        return None
+
+
+def _load_commodity_policy(brand: str) -> CommodityPolicy | None:
+    brand_id = _brand_id(brand)
     if brand_id is None:
         return None
 
-    rows = read_control_table_safe(
-        AutoreportBrandCommodities, ["brand_id", "is_active"], [brand_id, True], engine
+    rows = read_data(
+        AutoreportBrandCommodities, ["brand_id", "is_active"], [brand_id, True]
     )
     if rows is None or rows.empty:
         return None
@@ -166,11 +148,11 @@ def load_commodity_policy(brand: str, engine=None) -> CommodityPolicy | None:
     return policy
 
 
-def _brand_id(brand: str, engine=None) -> int | None:
+def _brand_id(brand: str) -> int | None:
     value = _text(brand)
     if not value:
         return None
-    rows = read_control_table_safe(AutoreportBrands, ["filter_value"], [value], engine)
+    rows = read_data(AutoreportBrands, ["filter_value"], [value])
     if rows is None or rows.empty:
         return None
     return int(rows.iloc[0]["id"])

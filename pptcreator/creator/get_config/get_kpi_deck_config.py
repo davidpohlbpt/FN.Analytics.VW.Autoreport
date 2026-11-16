@@ -37,8 +37,6 @@ class ReportRequest:
     run_id: str | None = None
     trigger: str = "manual"
     recipient_ids: list[int] = dataclasses.field(default_factory=list)
-    brand_policy: BrandPolicy | None = None
-    """Per-brand presentation (commodities, footnote); None -> resolved from the DB."""
 
     @classmethod
     def create(
@@ -55,7 +53,6 @@ class ReportRequest:
         run_id: str | None = None,
         trigger: str = "manual",
         recipient_ids: list[int] | None = None,
-        brand_policy: BrandPolicy | None = None,
     ) -> ReportRequest:
         brand = (brand or "").strip()
         if not brand:
@@ -76,7 +73,6 @@ class ReportRequest:
             run_id=run_id,
             trigger=trigger,
             recipient_ids=list(recipient_ids or []),
-            brand_policy=brand_policy,
         )
 
     @classmethod
@@ -94,7 +90,6 @@ class ReportRequest:
             run_id=event.get("run_id"),
             trigger=event.get("trigger") or "manual",
             recipient_ids=event.get("recipient_ids"),
-            brand_policy=BrandPolicy.from_event(event.get("brand_policy")),
         )
 
     def to_event(self) -> dict:
@@ -110,7 +105,6 @@ class ReportRequest:
             "target_file_name": self.target_file_name,
             "run_id": self.run_id,
             "trigger": self.trigger,
-            "brand_policy": self.brand_policy.to_event() if self.brand_policy else None,
         }
 
     @property
@@ -202,17 +196,16 @@ def get_kpi_deck_config(
         logging.info(f"Reading template slots from {container}/{template_file}")
         template_slots = discover_chart_slots(get_presentation(config_dict))
 
-        policy = request.brand_policy if request.brand_policy is not None else load_brand_policy(request.brand)
-
+        brand_policy = load_brand_policy(request.brand)
         kpis = select_kpis(template, request.kpi_ids)
-        results = fetch_kpi_results(request, source, kpis, policy)
+        results = fetch_kpi_results(request, source, kpis, brand_policy)
         config_dict["output_slides"] = build_output_slides(
             results,
             template_slots=template_slots,
             charts_per_detail_slide=template.commodity_charts_per_slide
             or settings.commodity_charts_per_slide,
             show_data_labels=show_data_labels,
-            brand_policy=policy,
+            brand_policy=brand_policy,
         )
 
         logging.info("Reading template object positions and fonts")

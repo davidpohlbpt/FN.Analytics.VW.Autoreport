@@ -1,4 +1,4 @@
-"""BrandPolicy: DB loading, the "no rows = defaults" fallback and the event round-trip."""
+"""BrandPolicy: DB loading and the "no rows = defaults" fallback."""
 
 import pandas as pd
 import pytest
@@ -13,7 +13,6 @@ from pptcreator.models.models import (
     AutoreportBrandCommodities,
     AutoreportBrandFeatures,
     AutoreportBrands,
-    AutoreportMappings,
     AutoreportTemplates,
 )
 from tests.unit.autoreport_fixtures import AUDI, SEAT, seed_control_tables  # noqa: F401
@@ -174,29 +173,6 @@ def test_policy_survives_a_missing_table(control_tables):  # noqa: F811
 
     assert policy.commodities is None
     assert policy.footnote_text == ""
-
-
-# ------------------------------------------------------------------------------ #
-# Event round-trip (plan -> render)
-# ------------------------------------------------------------------------------ #
-
-
-def test_event_round_trip(control_tables):  # noqa: F811
-    _seed_vw_pkw_policy(control_tables)
-    policy = load_brand_policy("VW PKW")
-
-    assert BrandPolicy.from_event(policy.to_event()) == policy
-
-
-def test_from_event_tolerates_older_payloads():
-    assert BrandPolicy.from_event(None) == BrandPolicy()
-    assert BrandPolicy.from_event({}) == BrandPolicy()
-    assert BrandPolicy.from_event({"brand": "Audi"}) == BrandPolicy(brand="Audi")
-    # 'commodities': None is what to_event() writes for a brand without rows
-    restored = BrandPolicy.from_event(
-        {"brand": "Audi", "commodities": None, "features": {}}
-    )
-    assert restored.commodities is None and restored.brand == "Audi"
 
 
 def test_footnote_is_empty_without_a_policy():

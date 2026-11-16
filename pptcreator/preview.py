@@ -47,11 +47,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--template", default=str(DEFAULT_TEMPLATE))
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--png", action="store_true", help="Also export slides as PNG (needs PowerPoint)")
-    parser.add_argument(
-        "--no-brand-policy",
-        action="store_true",
-        help="Ignore T_Control_Autoreport_BrandCommodities / _BrandFeatures (default behaviour)",
-    )
     args = parser.parse_args(argv)
 
     _load_env(ROOT / ".env")
@@ -68,7 +63,6 @@ def main(argv: list[str] | None = None) -> int:
     from pptcreator.creator.get_config.get_kpi_deck_config import safe_file_name
     from pptcreator.creator.get_config.get_template_config import get_template_config
     from pptcreator.kpi.base import ReportPeriod
-    from pptcreator.kpi.brand_policy import load_brand_policy
     from pptcreator.kpi.build_output_slides import build_output_slides, discover_chart_slots
     from pptcreator.kpi.leitstand_source import LeitstandKpiSource
     from pptcreator.kpi.registry import get_kpis
@@ -89,9 +83,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Brand {args.brand!r}: current {current_date} ({current.display}) vs. reference {reference_date} ({reference.display})")
 
     results = [source.fetch(kpi, args.brand, current, reference) for kpi in get_kpis(args.kpi)]
-    policy = None if args.no_brand_policy else load_brand_policy(args.brand, engine)
-    if policy is not None and policy.commodities is not None:
-        results = [policy.commodities.apply_to_result(r) for r in results]
 
     template = pathlib.Path(args.template)
     container = "preview"
@@ -107,10 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         "target_blob_container": container,
         "language": "DE",
         "output_slides": build_output_slides(
-            results,
-            template_slots=discover_chart_slots(Presentation(str(template))),
-            charts_per_detail_slide=7,
-            brand_policy=policy,
+            results, template_slots=discover_chart_slots(Presentation(str(template))), charts_per_detail_slide=7
         ),
     }
     config = get_template_config(config)

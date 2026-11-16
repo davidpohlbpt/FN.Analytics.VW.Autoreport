@@ -321,12 +321,6 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
     request = planned["requests"][0]
     # kpi_ids is a render-time parameter; keep the test deck small
     request["kpi_ids"] = ["bka_aktualisierung"]
-    assert request["brand_policy"]["features"]["footnote_text"] == "Nur sieben COMs."
-
-    # The brand tables are gone after planning: the snapshot must still drive the deck
-    with database.engine.begin() as con:
-        con.exec_driver_sql("DELETE FROM control.T_Control_Autoreport_BrandCommodities")
-        con.exec_driver_sql("DELETE FROM control.T_Control_Autoreport_BrandFeatures")
 
     out = lambda_handler.render_handler(request, None)
     assert out["status"] == "rendered"
@@ -336,9 +330,11 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
     detail_texts = [s.text_frame.text for s in prs.slides[1].shapes if s.has_text_frame]
     assert "Nur sieben COMs." in detail_texts
     assert sum(1 for s in prs.slides[1].shapes if s.has_chart) == 7
-    headlines = [t for t in detail_texts if t.startswith(("CB", "ZB", "BC", "BI", "BM", "BN", "BX"))]
-    assert any(t.startswith("CB") for t in headlines)
-    assert any(t.startswith("ZB") for t in headlines)
+    # The renamed commodities are shown under their VW PKW labels
+    assert any(t.startswith("CB") for t in detail_texts)
+    assert any(t.startswith("ZB") for t in detail_texts)
+    assert not any(t.startswith("BP") for t in detail_texts)
+    assert not any(t.startswith("BL") for t in detail_texts)
 
 
 # ------------------------------------------------------------------------------ #

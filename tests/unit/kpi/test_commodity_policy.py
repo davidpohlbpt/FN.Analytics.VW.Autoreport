@@ -124,10 +124,27 @@ def test_policy_rejects_duplicates():
         CommodityPolicy(entries=(CommodityEntry("BC", "X"), CommodityEntry("BC", "Y")))
 
 
-def test_policy_event_round_trip():
-    assert CommodityPolicy.from_event(VW_PKW.to_event()) == VW_PKW
-    assert CommodityPolicy.from_event(None) is None
-    assert CommodityPolicy.from_event({"entries": []}) is None
+def test_zero_fill_falls_back_to_any_known_commodity_categories():
+    """A KPI without total rows must still get a renderable zero row set."""
+    result = _result(["HI"])
+    result.current.total_rows = []
+    result.current.commodity_rows = {"HI": _rows(0.0, 0.0)}
+
+    applied = VW_PKW.apply(result.current)
+
+    assert applied.commodity_rows["CB"] == [
+        {"category": "a", "value": 0.0},
+        {"category": "b", "value": 0.0},
+    ]
+
+
+def test_zero_fill_without_any_categories_raises_a_clear_error():
+    result = _result([])
+    result.current.total_rows = []
+    result.current.commodity_rows = {}
+
+    with pytest.raises(ValueError, match="categories are unknown"):
+        VW_PKW.apply(result.current)
 
 
 def test_seven_commodities_fit_one_detail_slide():
