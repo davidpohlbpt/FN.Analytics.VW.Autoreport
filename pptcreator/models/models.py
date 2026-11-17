@@ -191,7 +191,8 @@ class AutoreportMappings(DeclarativeBase):
     """JSON {category: 'rgb(r, g, b)'} in category order. None -> frontend colours"""
 
     average_label: Mapped[str | None] = mapped_column(sa.String(20), default="Ø")
-    """Prefix for the average text in headlines; NULL/'' -> KPI has no average"""
+    """Deprecated: fallback only when T_Control_Autoreport_KpiMetrics has no row for the KPI.
+    Prefix for the average text in headlines; NULL/'' -> KPI has no average"""
 
     is_active: Mapped[bool] = mapped_column(default=True)
 
@@ -267,6 +268,43 @@ class AutoreportBrandFeatures(DeclarativeBase):
 
     feature_value: Mapped[str] = mapped_column(sa.String(200))
     """Text/render value of the feature, e.g. the footnote sentence"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class AutoreportKpiMetrics(DeclarativeBase):
+    """The value under each donut per KPI (same for all brands and templates).
+
+    Structured on purpose (no SQL text): numerator / denominator are sums of columns of
+    T_RESULT_Leitstand_Overview, filtered like the donut. See pptcreator/kpi/kpi_metric.py.
+    A KPI without an active row falls back to Mappings.average_label.
+    """
+
+    __tablename__ = "T_Control_Autoreport_KpiMetrics"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    kpi_key: Mapped[str] = mapped_column(sa.String(100))
+    """Same key as T_Control_Autoreport_Mappings.kpi_key, e.g. 'rote_bka'"""
+
+    metric_type: Mapped[str] = mapped_column(sa.String(20))
+    """'avg_age' | 'percent' | 'ratio' | 'count'"""
+
+    numerator_columns: Mapped[str | None] = mapped_column(sa.String(500))
+    """Comma-separated columns summed per row; NULL -> the donut total"""
+
+    numerator_not_null_column: Mapped[str | None] = mapped_column(sa.String(100))
+    """Only rows where this column IS NOT NULL count towards the numerator"""
+
+    denominator_columns: Mapped[str | None] = mapped_column(sa.String(500))
+    """Comma-separated columns summed per row; NULL -> the donut total"""
+
+    label: Mapped[str | None] = mapped_column(sa.String(50))
+    """Prefix in front of the value, e.g. 'Ø'; NULL/'' -> value only"""
+
+    explanation_text: Mapped[str | None] = mapped_column(sa.String(500))
+    """Text of the template's {kpi_explanation} token on the overview slide"""
 
     is_active: Mapped[bool] = mapped_column(default=True)
 

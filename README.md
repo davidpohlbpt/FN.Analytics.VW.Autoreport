@@ -71,12 +71,13 @@ Config Center) is still present and used by the older tests.
 ## Control tables (ReportDB, schema `control`)
 
 DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`,
-per-brand presentation in `004_brand_policy.sql`.
+per-brand presentation in `004_brand_policy.sql`, value under each donut in `005_kpi_metrics.sql`.
 
 | Table | Purpose | Key columns |
 |---|---|---|
 | `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `email_subject` |
-| `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` |
+| `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` (deprecated: only used when the KPI has no row in `T_Control_Autoreport_KpiMetrics`) |
+| `T_Control_Autoreport_KpiMetrics` | value under each donut, per KPI (all brands/templates) | `kpi_key`, `metric_type` (`avg_age`/`percent`/`ratio`/`count`), `numerator_columns` / `denominator_columns` (comma-separated columns of `T_RESULT_Leitstand_Overview`, summed with the donut's filter; `NULL` = donut total), `numerator_not_null_column` (only rows where it is not NULL), `label` (prefix, e.g. `Ø`), `explanation_text` (`{kpi_explanation}` on the overview slide), `is_active`. Structured on purpose, no SQL; invalid rows are ignored with a warning. **No active row ⇒ previous behaviour** (`average_label`). Percent `45 %` (whole number), ratio `120 / 30`; no data ⇒ `0 %` / `0 / 0` |
 | `T_Control_Autoreport_Brands` | brand master list (frontend dropdown) | `brand_name` (display), `filter_value` (`EK_ORG` value), `is_active` |
 | `T_Control_Autoreport_BrandCommodities` | per-brand commodity presentation | `brand_id` (FK Brands), `com_source` (`COM` in `T_RESULT_Leitstand_Overview`), `com_label` (headline label, enables renames), `sort_order`, `show_if_zero`, `is_active`. **No active rows for a brand ⇒ default behaviour** (all COMs, source labels/order, zeros skipped). Rows ⇒ whitelist + rename + order + zero-fill |
 | `T_Control_Autoreport_BrandFeatures` | per-brand feature switches | `brand_id` (FK Brands), `feature_key`, `feature_value` (`''` = explicitly off), `is_active`. **No active rows ⇒ feature off.** Supported key: `footnote_text` = text of the template's `{footnote}` token, so only that brand shows a footnote. Unknown keys are ignored with a warning |
@@ -260,3 +261,6 @@ docker push <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
   the feature gets an empty string and the shape is removed from the output slide, so no
   literal `{footnote}` and no empty text box ever reaches the deck. Put the token on the
   slides the footnote should appear on; it is currently on slide 2 only.
+- `{kpi_explanation}` holds the KPI's `explanation_text` from
+  `control.T_Control_Autoreport_KpiMetrics` on the overview slide (template slide 1) and is
+  empty on detail slides, so the shape is removed there and for KPIs without a text.

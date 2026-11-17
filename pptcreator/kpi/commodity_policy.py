@@ -58,9 +58,11 @@ class CommodityPolicy:
         """Return a copy of ``snapshot`` restricted, renamed, reordered and zero-filled."""
         commodity_rows: dict[str, Rows] = {}
         commodity_average_text: dict[str, str] = {}
+        commodity_metric_text: dict[str, str] = {}
         for entry in self.entries:
             rows = snapshot.commodity_rows.get(entry.source)
             average = snapshot.commodity_average_text.get(entry.source)
+            metric = snapshot.commodity_metric_text.get(entry.source)
 
             if rows is None:
                 if not entry.show_if_zero:
@@ -72,11 +74,15 @@ class CommodityPolicy:
             commodity_rows[entry.label] = rows
             if average is not None:
                 commodity_average_text[entry.label] = average
+            # A zero-filled COM has no value; the renderer shows the metric's empty text
+            if metric is not None:
+                commodity_metric_text[entry.label] = metric
 
         return dataclasses.replace(
             snapshot,
             commodity_rows=commodity_rows,
             commodity_average_text=commodity_average_text,
+            commodity_metric_text=commodity_metric_text,
         )
 
 

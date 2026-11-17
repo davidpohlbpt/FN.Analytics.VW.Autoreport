@@ -76,7 +76,10 @@ def build_output_slides(
         slides = [_overview_slide(result, overview_slots, show_data_labels)]
         slides.extend(_detail_slides(result, detail_slots, per_slide, show_data_labels))
         for slide in slides:
-            slide["text_values"] = text_values
+            slide["text_values"] = {
+                **text_values,
+                "kpi_explanation": _explanation(result) if slide["template_slide"] == OVERVIEW_SLIDE else "",
+            }
         output_slides.extend(slides)
 
     logging.info(f"Built {len(output_slides)} output slides for {len(results)} KPI(s).")
@@ -122,7 +125,8 @@ def _text_values(result: KpiResult, brand_policy: "BrandPolicy | None" = None) -
     """Placeholders of the template's 'Targets' box, data source line and footnote.
 
     ``footnote`` is always present: an empty string blanks the token, so brands without a
-    footnote row never show a literal ``{footnote}`` on the slide.
+    footnote row never show a literal ``{footnote}`` on the slide. ``kpi_explanation`` is
+    added per slide by the caller (overview slide only).
     """
     return {
         "brand": result.brand,
@@ -156,11 +160,37 @@ def _avg_text(result: KpiResult, text: str | None) -> str:
     return f"{label} {text}"
 
 
+def _uses_metric(result: KpiResult, snapshot: KpiSnapshot) -> bool:
+    """The KPI has a configured metric and the source computed it (Leitstand only)."""
+    return result.definition.metric is not None and snapshot.metric_text is not None
+
+
+def _explanation(result: KpiResult) -> str:
+    metric = result.definition.metric
+    return metric.explanation_text if metric is not None else ""
+
+
+def _overview_value(result: KpiResult, snapshot: KpiSnapshot) -> str:
+    if _uses_metric(result, snapshot):
+        return result.definition.metric.render(snapshot.metric_text)
+    return _avg_text(result, snapshot.average_text)
+
+
+def _commodity_metric_value(result: KpiResult, snapshot: KpiSnapshot, commodity: str) -> str:
+    """Metric value of a COM; a COM without value gets the metric's empty text ('0 %'),
+    avg_age without value falls back to the number of BKAs as before."""
+    metric = result.definition.metric
+    text = snapshot.commodity_metric_text.get(commodity) or metric.empty_text
+    if text is None:
+        return _total_text(snapshot.commodity_rows[commodity])
+    return metric.render(text)
+
+
 def _overview_lines(result: KpiResult, snapshot: KpiSnapshot) -> list[list[tuple[str, str]]]:
     """Template: '{week} – {brand}' (week bold) / '{kpi}'."""
     return [
         [(_week(snapshot.period), "first"), (f" – {result.brand}", "rest")],
-        [(_avg_text(result, snapshot.average_text), "first")],
+        [(_overview_value(result, snapshot), "first")],
     ]
 
 
@@ -241,8 +271,25 @@ def _commodity_headline(
 ) -> list[list[tuple[str, str]]]:
     """Template: '{COM} {kpi}' / '{different KW}: {kpi}'.
 
-    {kpi} is the average (KPI with ``average_label``) or the number of BKAs/errors.
+    {kpi} is the configured metric (e.g. '45 %'), else the average (KPI with
+    ``average_label``) or the number of BKAs/errors. '-' when the reference week has no
+    data for the COM.
     """
+    if _uses_metric(result, cur):
+        current_value = _commodity_metric_value(result, cur, commodity)
+        if commodity in ref.commodity_rows:
+            reference_value = (
+                _commodity_metric_value(result, ref, commodity)
+                if _uses_metric(result, ref)
+                else _total_text(ref.commodity_rows[commodity])
+            )
+        else:
+            reference_value = "-"
+        return [
+            [(f"{commodity} {current_value}", "first")],
+            [(f"{_week(ref.period, short=True)}: {reference_value}", "first")],
+        ]
+
     label = result.definition.average_label
     cur_avg = cur.commodity_average_text.get(commodity)
     if label is not None and cur_avg:

@@ -18,6 +18,7 @@ import pandas as pd
 
 from pptcreator.config import settings
 from pptcreator.kpi.base import KpiDefinition, ReportPeriod
+from pptcreator.kpi.kpi_metric import KpiMetric
 from pptcreator.models.enum import Languages
 from pptcreator.models.models import (
     AutoreportBrands,
@@ -109,7 +110,7 @@ class TemplateConfig:
 
     @classmethod
     def from_event(cls, event: dict) -> TemplateConfig:
-        kpis = [KpiDefinition(**kpi) for kpi in event["kpis"]]
+        kpis = [_kpi_from_event(kpi) for kpi in event["kpis"]]
         # The render Lambda's own override still applies to a planned snapshot
         if settings.kpi_source_override:
             kpis = [dataclasses.replace(k, source=settings.kpi_source_override) for k in kpis]
@@ -127,6 +128,13 @@ class TemplateConfig:
 
 
 # ------------------------------------------------------------------------------ #
+
+
+def _kpi_from_event(data: dict) -> KpiDefinition:
+    metric = data.get("metric")
+    if isinstance(metric, dict):
+        data = {**data, "metric": KpiMetric.from_dict(metric)}
+    return KpiDefinition(**data)
 
 
 def list_active_template_ids() -> list[int]:

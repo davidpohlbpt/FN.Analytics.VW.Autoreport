@@ -11,7 +11,10 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import re
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from pptcreator.kpi.kpi_metric import KpiMetric
 
 Rows = list[dict]
 
@@ -51,6 +54,9 @@ class KpiDefinition:
     """Name of the query in ``sql_source.QUERIES``, used by the backend source."""
 
     order: int = 0
+
+    metric: KpiMetric | None = None
+    """Value under the donut (T_Control_Autoreport_KpiMetrics); None -> ``average_label``."""
 
     @property
     def categories(self) -> list[str]:
@@ -120,6 +126,12 @@ class KpiSnapshot:
     """Already formatted, e.g. ``2 Jahre, 5 Monate``; None if not applicable."""
 
     commodity_average_text: dict[str, str] = dataclasses.field(default_factory=dict)
+
+    metric_text: str | None = None
+    """Formatted value of ``definition.metric`` without label, e.g. ``45 %``. None -> the
+    source does not support the metric; the headline uses ``average_text`` instead."""
+
+    commodity_metric_text: dict[str, str] = dataclasses.field(default_factory=dict)
 
     def validate(self, definition: KpiDefinition) -> None:
         _validate_rows(self.total_rows, definition, f"{definition.id}/{self.period}/total")

@@ -1,7 +1,10 @@
+import dataclasses
+
 import pytest
 
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod
 from pptcreator.kpi.brand_policy import FEATURE_FOOTNOTE_TEXT, BrandPolicy
+from pptcreator.kpi.kpi_metric import KpiMetric
 from pptcreator.kpi.build_output_slides import (
     DETAIL_SLIDE,
     OVERVIEW_SLIDE,
@@ -138,6 +141,74 @@ def test_footnote_defaults_to_empty_string():
         [_result(["BC"])], template_slots=TEMPLATE_SLOTS, brand_policy=BrandPolicy(brand="Audi")
     )
     assert {s["text_values"]["footnote"] for s in no_footnote} == {""}
+
+
+PERCENT = KpiMetric(kpi_key="t", metric_type="percent", numerator_columns=("Rot",), denominator_columns=("y",),
+                    label="rot", explanation_text="Anteil rote BKAs")
+
+
+def _metric_result(metric, current: dict, reference: dict, *, total="45 %", ref_total="40 %") -> KpiResult:
+    def snapshot(period, values, text):
+        return KpiSnapshot(
+            period=ReportPeriod.parse(period),
+            total_rows=_rows(),
+            commodity_rows={c: _rows() for c in values},
+            metric_text=text,
+            commodity_metric_text={c: v for c, v in values.items() if v is not None},
+        )
+
+    definition = dataclasses.replace(KPI, metric=metric)
+    return KpiResult(
+        definition=definition, brand="Audi",
+        current=snapshot("KW45", current, total), reference=snapshot("KW37", reference, ref_total),
+    )
+
+
+def test_metric_value_under_every_donut():
+    result = _metric_result(PERCENT, {"BC": "50 %", "BI": None, "BM": "7 %"}, {"BC": "30 %", "BI": None})
+    slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
+
+    assert slides[0]["charts"]["Chart 1"]["headline"] == "KW37 – Audi\nrot 40 %"
+    assert slides[0]["charts"]["Chart 2"]["headline"] == "KW45 – Audi\nrot 45 %"
+    detail = slides[1]["charts"]
+    assert detail["Chart 3"]["headline"] == "BC rot 50 %\nKW37: rot 30 %"
+    # a COM without value (e.g. zero-filled) shows the empty text, a COM missing in the reference '-'
+    assert detail["Chart 4"]["headline"] == "BI rot 0 %\nKW37: rot 0 %"
+    assert detail["Chart 5"]["headline"] == "BM rot 7 %\nKW37: -"
+
+
+def test_ratio_metric_without_label():
+    ratio = KpiMetric(kpi_key="t", metric_type="ratio", denominator_columns=("RedOver52",))
+    result = _metric_result(ratio, {"BC": "120 / 30"}, {"BC": "100 / 20"}, total="763 / 34", ref_total="700 / 30")
+    slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
+    assert slides[0]["charts"]["Chart 2"]["headline"] == "KW45 – Audi\n763 / 34"
+    assert slides[1]["charts"]["Chart 3"]["headline"] == "BC 120 / 30\nKW37: 100 / 20"
+
+
+def test_avg_age_metric_renders_like_the_average_label():
+    avg_age = KpiMetric(kpi_key="t", metric_type="avg_age", label="Ø")
+    result = _metric_result(avg_age, {"BC": "2 Monate", "BI": None}, {"BC": "2 Monate", "BI": None}, total="1 Jahr", ref_total="1 Jahr")
+    slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
+    assert slides[0]["charts"]["Chart 2"]["headline"] == "KW45 – Audi\nØ 1 Jahr"
+    assert slides[1]["charts"]["Chart 3"]["headline"] == "BC Ø 2 Monate\nKW37: Ø 2 Monate"
+    assert slides[1]["charts"]["Chart 4"]["headline"] == "BI 3\nKW37: 3"  # no average -> count, as before
+
+
+def test_metric_not_computed_by_the_source_falls_back_to_the_average():
+    result = _result(["BC"])
+    result.definition = dataclasses.replace(KPI, metric=PERCENT)  # snapshot.metric_text is None
+    slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
+    assert slides[0]["charts"]["Chart 2"]["headline"] == "KW45 – Audi\nØ 1 Jahr"
+
+
+def test_kpi_explanation_only_on_the_overview_slide():
+    result = _metric_result(PERCENT, {"BC": "50 %"}, {"BC": "30 %"})
+    slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
+    assert slides[0]["text_values"]["kpi_explanation"] == "Anteil rote BKAs"
+    assert slides[1]["text_values"]["kpi_explanation"] == ""
+
+    without_metric = build_output_slides([_result(["BC"])], template_slots=TEMPLATE_SLOTS)
+    assert {s["text_values"]["kpi_explanation"] for s in without_metric} == {""}
 
 
 def test_unknown_category_is_rejected():

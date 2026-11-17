@@ -76,6 +76,13 @@ def test_policy_renames_average_text_keys():
     assert applied.commodity_average_text["CB"] == "2 Monate"
 
 
+def test_policy_renames_metric_text_keys():
+    snapshot = _result(["BC", "BP"]).current
+    snapshot.commodity_metric_text = {"BC": "10 %", "BP": "45 %"}
+    applied = VW_PKW.apply(snapshot)
+    assert applied.commodity_metric_text == {"BC": "10 %", "CB": "45 %"}  # zero-filled COMs have none
+
+
 def test_policy_zero_fills_a_commodity_with_no_rows():
     # ZB/BL and CB/BP are absent from the snapshot entirely
     applied = VW_PKW.apply(_result(["BC", "BI", "BM", "BN", "BX"]).current)

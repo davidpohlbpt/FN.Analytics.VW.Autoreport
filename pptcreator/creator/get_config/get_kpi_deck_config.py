@@ -18,6 +18,7 @@ from pptcreator.creator.get_config.get_template_config import get_template_confi
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSource, ReportPeriod
 from pptcreator.kpi.brand_policy import BrandPolicy, load_brand_policy
 from pptcreator.kpi.build_output_slides import build_output_slides, discover_chart_slots
+from pptcreator.kpi.kpi_metric import attach_metrics, load_kpi_metrics
 from pptcreator.models.enum import Languages
 from pptcreator.utils.get_presentation import get_presentation
 
@@ -197,7 +198,7 @@ def get_kpi_deck_config(
         template_slots = discover_chart_slots(get_presentation(config_dict))
 
         brand_policy = load_brand_policy(request.brand)
-        kpis = select_kpis(template, request.kpi_ids)
+        kpis = attach_metrics(select_kpis(template, request.kpi_ids), load_kpi_metrics())
         results = fetch_kpi_results(request, source, kpis, brand_policy)
         config_dict["output_slides"] = build_output_slides(
             results,
