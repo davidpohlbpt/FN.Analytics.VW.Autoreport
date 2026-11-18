@@ -17,6 +17,7 @@ from sender import app as send_app
 
 from pptcreator import lambda_handler
 from pptcreator.config import settings
+from pptcreator.creator.get_config.get_autoreport_config import get_template_config
 from pptcreator.creator.graph_steer_creation_process import current_calendar_week
 from pptcreator.kpi.registry import KPIS
 from pptcreator.lambdas import plan
@@ -67,12 +68,16 @@ def test_plan_adhoc_picks_send_now_rows(stack):
     out = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
 
     assert out["count"] == 2  # rows 2 (Audi) and 4 (Seat) have send_now = 1
+    assert out["has_requests"] is True
     by_email = {r["recipients"][0]: r for r in out["requests"]}
     assert set(by_email) == {"b@x.de", "d@x.de"}
-    assert by_email["b@x.de"]["current_period"] == "2025-11-28"
-    assert by_email["b@x.de"]["reference_period"] == "2025-11-18"
-    assert by_email["b@x.de"]["recipient_ids"] == [2]
-    assert all(r["run_id"] == out["run_id"] and r["trigger"] == "adhoc" for r in out["requests"])
+    # exactly what render (deck) and record (recipient_ids) read, nothing else
+    assert by_email["b@x.de"] == {
+        "template_id": TEMPLATE_ID, "brand": "Audi",
+        "current_period": "2025-11-28", "reference_period": "2025-11-18",
+        "recipients": ["b@x.de"], "recipient_ids": [2],
+    }
+    assert set(out) == {"has_requests", "count", "requests", "errors"}
 
     # plan claims the rows but does not touch send_now; the record step clears it
     runs = _runs()
@@ -87,11 +92,12 @@ def test_plan_skips_rows_with_an_open_claim(stack):
 
     # the poller runs again before the first run finished: those rows must not be sent twice
     second = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
-    assert second["count"] == 0 and second["skipped"] == 2 and second["requests"] == []
+    assert second["count"] == 0 and second["requests"] == []
+    assert second["has_requests"] is False  # Step Functions Choice: nothing to render
     assert len(_runs()) == 2
 
     # once recorded, the row is free again (a deliberate resend by the frontend)
-    lambda_handler.record_handler({"run_id": first["run_id"], "results": [
+    lambda_handler.record_handler({"results": [
         {"status": "failed", "step": "send", "request": r, "error": {"Error": "SendFailed", "Cause": "x"}}
         for r in first["requests"]
     ]}, None)
@@ -115,7 +121,7 @@ def test_plan_recipient_id_filter(stack):
 
 def test_plan_default_trigger_is_adhoc(stack):
     out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    assert out["trigger"] == "adhoc" and out["count"] == 2
+    assert out["count"] == 2  # only the two send_now rows
 
 
 def test_plan_rejects_bad_trigger(stack):
@@ -128,7 +134,6 @@ def test_plan_template_ids_from_env_and_partial_failure(stack, monkeypatch):
 
     out = lambda_handler.plan_handler({"trigger": "adhoc"}, None)
 
-    assert out["template_ids"] == [TEMPLATE_ID, 99]
     assert out["count"] == 2  # template 99 does not exist, the others are still planned
     assert [e["template_id"] for e in out["errors"]] == [99]
 
@@ -154,24 +159,24 @@ def test_plan_payload_too_large_has_no_side_effects(stack, monkeypatch):
     assert _runs().empty  # no claim written when the payload would not fit
 
 
-def test_render_uses_template_snapshot_from_plan(stack):
+def test_render_accepts_the_plan_output_and_an_optional_template_snapshot(stack):
     request = lambda_handler.plan_handler(
-        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "current_period": "2026-KW45"}, None
+        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "recipient_ids": [3]}, None
     )["requests"][0]
-    assert request["template"]["id"] == TEMPLATE_ID and len(request["template"]["kpis"]) == len(KPIS)
-
-    # The control tables change after planning: the run keeps its snapshot
-    table = AutoreportTemplates.__table__
-    with database.engine.begin() as con:
-        con.execute(sa.update(table).values(is_active=False))
+    request["kpi_ids"] = ["bka_aktualisierung"]  # keep the test deck small
 
     out = lambda_handler.render_handler(request, None)
     assert out["status"] == "rendered"
-    assert "template" not in out["request"]  # Step Functions payload stays small
+    assert out["request"]["recipients"] == ["c@x.de"]  # passed on to the send step
 
-    without_snapshot = {k: v for k, v in request.items() if k != "template"}
+    # a hand-written snapshot still wins over the control tables
+    snapshot = get_template_config(TEMPLATE_ID).to_event()
+    table = AutoreportTemplates.__table__
+    with database.engine.begin() as con:
+        con.execute(sa.update(table).values(is_active=False))
+    assert lambda_handler.render_handler({**request, "template": snapshot}, None)["status"] == "rendered"
     with pytest.raises(lambda_handler.RenderFailed, match="not found or inactive"):
-        lambda_handler.render_handler(without_snapshot, None)
+        lambda_handler.render_handler(request, None)
 
 
 # ------------------------------------------------------------------------------ #
@@ -210,7 +215,8 @@ def test_render_handler_end_to_end(stack):
     assert any(t.startswith("KW45 – Audi") for t in texts)
     for slide in (first, prs.slides[1]):
         texts = [s.text_frame.text for s in slide.shapes if s.has_text_frame]
-        assert "IDM, Filterung auf Einkaufsorganisation Audi, alle BKAs, KW45, V11 " in texts
+        # stub source has no LAUFKENNUNG: {datenquelle_run} falls back to the week label
+        assert "BKM IDM, Filterung auf Einkaufsorganisation Audi, alle BKAs, KW45" in texts
     # Audi has no footnote row -> the template's {footnote} shape is not copied at all
     for slide in prs.slides:
         texts = [s.text_frame.text for s in slide.shapes if s.has_text_frame]
@@ -414,9 +420,9 @@ def test_state_machine_round_trip(stack):
     # render updated its claim, the extra row is still only claimed; send has no DB access
     assert set(_runs()["status"]) == {"rendered", "processing"}
 
-    out = lambda_handler.record_handler({"run_id": plan["run_id"], "results": decks}, None)
+    out = lambda_handler.record_handler({"results": decks}, None)
 
-    assert out == {"run_id": plan["run_id"], "recorded": 3, "sent": 2, "skipped": 0, "failed": 1, "cleared": 2}
+    assert out == {"run_id": None, "recorded": 3, "sent": 2, "skipped": 0, "failed": 1, "cleared": 2}
     runs = _runs().set_index("recipient_id")
     assert runs.loc[2, "status"] == "sent" and runs.loc[2, "message_id"]
     assert runs.loc[2, "user_email"] == "b@x.de"
@@ -438,7 +444,7 @@ def test_skip_leaves_send_now_cleared_but_row_not_resent(stack):
     request = plan["requests"][0]
 
     # MAIL_ENABLED=false in the send Lambda -> skipped, still a finished run
-    out = lambda_handler.record_handler({"run_id": plan["run_id"], "results": [
+    out = lambda_handler.record_handler({"results": [
         {"status": "skipped", "request": request, "error": "MAIL_ENABLED is false."}
     ]}, None)
 
@@ -451,7 +457,7 @@ def test_record_handler_failure_keeps_send_now(stack):
     plan = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
     by_email = {r["recipients"][0]: r for r in plan["requests"]}
 
-    lambda_handler.record_handler({"run_id": plan["run_id"], "results": [
+    lambda_handler.record_handler({"results": [
         {"status": "failed", "step": "send", "request": by_email["d@x.de"],
          "error": {"Error": "SendFailed", "Cause": json.dumps({"errorMessage": "SES down"})}},
     ]}, None)

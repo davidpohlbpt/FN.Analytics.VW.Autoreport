@@ -72,6 +72,16 @@ VALUES
  (950104,1,3,NULL,'TN_ValueRequired'),
  (950104,1,2,'^(46/2026|47/2026|48/2026)$','TN_InvalidWeek');   -- update weekly
 
+/* send_now as icon instead of true/false: checkmark for 1, empty box for 0
+   (FormattingID is identity -> not set) */
+INSERT INTO ReportDB.dbo.T_CONTROL_Report_DataSourceColumnsFormatting
+    (Style, Icon, Value, MappingType, ReportDataSourceColumnsID)
+SELECT v.Style, v.Icon, v.Value, 'Equal', 950105
+FROM (VALUES ('color:black', 'fa fa-check',    '1'),
+             ('color:black', 'fa fa-square-o', '0')) v(Style, Icon, Value)
+WHERE NOT EXISTS (SELECT 1 FROM ReportDB.dbo.T_CONTROL_Report_DataSourceColumnsFormatting f
+                  WHERE f.ReportDataSourceColumnsID = 950105 AND f.Value = v.Value);
+
 /* tiles */
 SET IDENTITY_INSERT ReportDB.dbo.T_CONTROL_Layout_Tiles ON;
 INSERT INTO ReportDB.dbo.T_CONTROL_Layout_Tiles
@@ -98,12 +108,10 @@ INSERT INTO ReportDB.dbo.T_CONTROL_Layout_Table
 VALUES (9501, 950, 0, NULL, NULL, NULL, 1, NULL, 9501, 0, 1, 1, 9502);
 SET IDENTITY_INSERT ReportDB.dbo.T_CONTROL_Layout_Table OFF;
 
-/* tile options: TileOptionID is identity -> not set. 16 does not exist; 28/29/30 like 940 */
+/* tile options: TileOptionID is identity -> not set. 16 does not exist; 28/29/30 like 940.
+   No Excel export (8, 12) and no variant management (9): the defaults ('0') apply. */
 INSERT INTO ReportDB.dbo.T_CONTROL_Layout_TileOption (TileID, OptionID, Value) VALUES
  (9502,  7, '1'),                          -- HasColumnSelection
- (9502,  8, '1'),                          -- HasExcelExport
- (9502,  9, '1'),                          -- HasVariantManagement
- (9502, 12, 'translated'),                 -- ExcelTableHeaderType
  (9502, 17, 'ConfirmationDialogDelete'),   -- ConfirmationDialogDelete
  (9502, 28, 'AutoReportRecipientsClaim'),  -- GenericTableAddClaim
  (9502, 29, 'AutoReportRecipientsClaim'),  -- GenericTableEditClaim
@@ -117,8 +125,8 @@ INSERT INTO @tk VALUES
  ('DE','TN_AutoReportRecipients_Main_Titel','Auto Report Einstellungen'),
  ('EN','TN_AutoReportRecipients_Main_Info_Titel','Information'),
  ('DE','TN_AutoReportRecipients_Main_Info_Titel','Information'),
- ('EN','TN_AutoReportRecipients_Main_Table_Titel','Recipients'),
- ('DE','TN_AutoReportRecipients_Main_Table_Titel','Empfänger'),
+ ('EN','TN_AutoReportRecipients_Main_Table_Titel','Autoreport Configuration'),
+ ('DE','TN_AutoReportRecipients_Main_Table_Titel','Autoreport-Konfiguration'),
  ('EN','TN_Helptext_AutoReportRecipients_Main_Table','Brand, reporting week and comparison week must be chosen from the allowed values.'),
  ('DE','TN_Helptext_AutoReportRecipients_Main_Table','Marke, Berichtswoche und Vergleichswoche müssen aus den erlaubten Werten gewählt werden.'),
  ('EN','TN_AutoReportRecipients_Main_Info_Text','<p>Select brand, reporting week and comparison week.</p>'),
@@ -131,8 +139,8 @@ INSERT INTO @tk VALUES
  ('DE','TN_Abgleichswoche','Vergleichswoche'),
  ('EN','TN_SendNow','Send report'),
  ('DE','TN_SendNow','Auswertung anfordern'),
- ('EN','TN_LastReportTime','Last report'),
- ('DE','TN_LastReportTime','Letzter Report'),
+ ('EN','TN_LastReportTime','Last request'),
+ ('DE','TN_LastReportTime','Letzte Anforderung'),
  ('EN','TN_InvalidBrand','Please choose a brand from the list.'),
  ('DE','TN_InvalidBrand','Bitte wählen Sie eine Marke aus der Liste.'),
  ('EN','TN_InvalidWeek','Please choose a week from the list.'),

@@ -19,7 +19,7 @@ without VPC, database or DQN access:
 ```
 EventBridge (weekly) ──┐
 EventBridge (5 min)  ──┴──> Step Functions
-                              Plan   (Lambda 1, image, lambdas/plan.py)    control tables -> [ReportRequest + template snapshot]
+                              Plan   (Lambda 1, image, lambdas/plan.py)    control tables -> [ReportRequest]
                               Map over requests (concurrency 2)
                                 Render (Lambda 2, image, lambdas/render.py)  one request -> deck in S3
                                 Send   (Lambda 3, ZIP, functions/send)       deck in S3 -> SES e-mail
@@ -28,7 +28,7 @@ EventBridge (5 min)  ──┴──> Step Functions
 
 | Lambda | Handler | Input | Output | Side effects |
 |---|---|---|---|---|
-| 1 Plan | `pptcreator.lambdas.plan.handler` | `{"trigger": "adhoc"\|"scheduled"}` (default `adhoc`; optional `template_ids`/`template_id`, `recipient_ids`, `run_id`) | `{"run_id", "template_ids", "count", "skipped", "errors", "requests": [...]}`; one request per recipient row, each with a `template` snapshot (template link, KPI definitions, file name/subject pattern) | run log rows `processing` (the claim); rows with an open claim are skipped |
+| 1 Plan | `pptcreator.lambdas.plan.handler` | `{}` (default `adhoc` = only `send_now = 1`; optional `trigger` `"scheduled"`, `template_ids`/`template_id`, `recipient_ids`) | `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids"}], "errors"}`; one request per recipient row, directly usable as render input. `has_requests = false` lets a Choice state end the execution | run log rows `processing` (the claim); rows with an open claim are skipped |
 | 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written `ReportRequest` without `template` (`deployment/events/render_request.json`; then the control tables are read) | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`) | deck in S3; run log `rendered`/`failed`; raises on failure |
 | 3 Send | `sender.app.handler` (ZIP) | the `RenderResult` as JSON (+ optional `recipients` override) | `{"status": "sent"\|"skipped", "request", "recipients", "message_id", "error"}` | SES mail; raises on failure |
 | 4 Record | `pptcreator.lambdas.record.handler` | `{"run_id", "results": [Map output]}` | `{"recorded", "sent", "skipped", "failed", "cleared"}` | run log `sent` / `skipped` / `failed`; `send_now` cleared for sent and skipped rows |

@@ -1,20 +1,23 @@
 """Lambda 1: read the recipient table and hand one work item per deck to the render Lambda.
 
-in:  {"trigger": "adhoc" | "scheduled",               default: adhoc
-      "template_ids": [1, 3] | "template_id": 1,     optional, else PLAN_TEMPLATE_IDS
-      "recipient_ids": [7, 8],                        optional, only these rows
-      "run_id": "..."}                                optional
-out: {"run_id", "trigger", "template_ids", "count", "skipped", "errors",
-      "requests": [ReportRequest + {"template": TemplateConfig snapshot}, ...]}
+in:  {}  (all optional)
+     {"trigger": "adhoc" | "scheduled",               default adhoc: only send_now = 1
+      "template_ids": [1, 3] | "template_id": 1,     else PLAN_TEMPLATE_IDS / all active
+      "recipient_ids": [7, 8]}                        only these rows
+out: {"has_requests": true,
+      "count": 1,
+      "requests": [{"template_id", "brand", "current_period", "reference_period",
+                    "recipients": ["a@x.de"], "recipient_ids": [3]}],
+      "errors": [{"template_id", "error"}]}           templates that could not be planned
+     "has_requests" is false when nothing is to be sent: a Step Functions Choice state
+     can end the execution there. Each request is the input of the render Lambda, which
+     reads the template and KPI mappings itself and passes recipients on to the send step.
+     recipient_ids identify the row for the run log and for clearing send_now (record).
 
 ``adhoc`` picks the recipient rows with ``send_now = 1``; that flag is set and cleared by
 the frontend and by the record step, never here. Every request is one recipient row:
 the two runs come from ``report_week`` / ``comparison_week`` (e.g. 'V01-B (46/2025)')
 and are resolved to snapshots by the KPI source.
-
-Each request carries the full template config (template link, KPI definitions, file
-name and subject pattern), so the whole run uses one consistent snapshot and the render
-Lambda does not re-read the template and mapping tables.
 
 Side effects: one run-log row per deck with status 'processing' (the claim that stops
 the 5-10 minute poller from sending a row twice), written only after the payload is
@@ -38,6 +41,9 @@ from pptcreator.creator.graph_steer_creation_process import plan_decks  # noqa: 
 from pptcreator.utils import run_log  # noqa: E402
 
 TRIGGERS = ("scheduled", "adhoc")
+
+OUTPUT_FIELDS = ("template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids")
+"""Per deck in the output. recipient_ids identifies the row for the run log and send_now."""
 
 # Step Functions limit for a state's input/output is 256 KiB; keep room for the wrapper.
 MAX_PAYLOAD_BYTES = 240 * 1024
@@ -70,9 +76,8 @@ def handler(event, context):
             logging.exception(f"Planning template {template_id} failed: {exc}")
             errors.append({"template_id": template_id, "error": f"{type(exc).__name__}: {exc}"})
             continue
-        snapshot = template.to_event()
         requests.extend(planned)
-        items.extend({**r.to_event(), "template": snapshot} for r in planned)
+        items.extend(_output_item(r) for r in planned)
 
     if len(errors) == len(template_ids):
         raise PlanFailed(f"All templates failed: {errors}")
@@ -91,23 +96,31 @@ def handler(event, context):
     items = [i for i in items if i.get("recipient_ids") and i["recipient_ids"][0] not in claimed]
 
     result = {
-        "run_id": run_id,
-        "trigger": trigger,
-        "template_ids": template_ids,
+        "has_requests": bool(items),
         "count": len(items),
-        "skipped": len(claimed),
-        "errors": errors,
         "requests": items,
+        "errors": errors,
     }
     _check_payload_size(result)
 
     run_log.log_processing(selected)
 
+    for item in items:
+        logging.info(
+            f"Planned: recipient {item['recipient_ids']} {item['brand']} "
+            f"{item['current_period']} vs. {item['reference_period']} -> {item['recipients']}"
+        )
     logging.info(
-        f"Planned {len(items)} deck(s) for {trigger} from template(s) {template_ids}; "
+        f"Run {run_id}: planned {len(items)} deck(s) for {trigger} from template(s) {template_ids}; "
         f"skipped {len(claimed)} claimed row(s)."
     )
     return result
+
+
+def _output_item(request) -> dict:
+    """The fields the next steps read: render (deck) and record (recipient_ids)."""
+    event = request.to_event()
+    return {key: event[key] for key in OUTPUT_FIELDS}
 
 
 def resolve_template_ids(event: dict) -> list[int]:
