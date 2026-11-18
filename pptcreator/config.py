@@ -1,7 +1,8 @@
 """Project settings.
 
 All values are read from environment variables (case-insensitive) and can be set in
-``.env`` for local runs. In AWS Lambda they are provided by the SAM template; secrets
+``.env`` for local runs. In AWS Lambda they are set as environment variables of each
+function; secrets
 are injected from Secrets Manager into the environment and read by pycore's EnvVault.
 """
 
@@ -27,9 +28,8 @@ class CreatorSettings(BaseSettings):
     ``template_id`` / ``template_ids`` in the event takes precedence."""
 
     state_machine_arn: str | None = None
-    """STATE_MACHINE_ARN: when set, the plan Lambda starts this Step Function (render ->
-    send -> record) itself, and only when there is something to send. Empty -> plan only
-    returns its output (the Step Function calls plan as its first state)."""
+    """STATE_MACHINE_ARN: the plan Lambda starts this Step Function (render -> send ->
+    record), only when there is something to send. Empty -> plan only returns its output."""
 
     # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"

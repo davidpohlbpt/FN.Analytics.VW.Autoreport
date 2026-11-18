@@ -372,7 +372,7 @@ class AutoreportRuns(DeclarativeBase):
     """Legacy column, kept for older rows"""
 
     trigger: Mapped[str] = mapped_column(sa.String(20))
-    """'adhoc' | 'scheduled' | 'manual'"""
+    """'adhoc' | 'manual'"""
 
     status: Mapped[str] = mapped_column(sa.String(20))
     """'processing' (claim) | 'rendered' | 'sent' | 'skipped' | 'failed'"""

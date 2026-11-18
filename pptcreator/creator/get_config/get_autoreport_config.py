@@ -18,7 +18,6 @@ import pandas as pd
 
 from pptcreator.config import settings
 from pptcreator.kpi.base import KpiDefinition, ReportPeriod
-from pptcreator.kpi.kpi_metric import KpiMetric
 from pptcreator.models.enum import Languages
 from pptcreator.models.models import (
     AutoreportBrands,
@@ -47,13 +46,6 @@ class StorageLocation:
     @property
     def file_name(self) -> str:
         return self.key.rsplit("/", 1)[-1]
-
-    def to_event(self) -> dict:
-        return dataclasses.asdict(self)
-
-    @classmethod
-    def from_event(cls, event: dict) -> StorageLocation:
-        return cls(bucket=event.get("bucket"), key=event["key"], container=event.get("container"))
 
     @classmethod
     def parse(cls, link: str, *, default_container: str) -> StorageLocation:
@@ -94,47 +86,8 @@ class TemplateConfig:
         pattern = self.email_subject or "VW KPI Report {brand}: {current} vs. {reference}"
         return pattern.format(brand=brand, current=current, reference=reference)
 
-    def to_event(self) -> dict:
-        """JSON snapshot handed from the plan Lambda to the render Lambda."""
-        return {
-            "id": self.id,
-            "name": self.name,
-            "template": self.template.to_event(),
-            "language": self.language.value,
-            "target_file_name": self.target_file_name,
-            "target": self.target.to_event() if self.target else None,
-            "commodity_charts_per_slide": self.commodity_charts_per_slide,
-            "email_subject": self.email_subject,
-            "kpis": [dataclasses.asdict(kpi) for kpi in self.kpis],
-        }
-
-    @classmethod
-    def from_event(cls, event: dict) -> TemplateConfig:
-        kpis = [_kpi_from_event(kpi) for kpi in event["kpis"]]
-        # The render Lambda's own override still applies to a planned snapshot
-        if settings.kpi_source_override:
-            kpis = [dataclasses.replace(k, source=settings.kpi_source_override) for k in kpis]
-        return cls(
-            id=int(event["id"]),
-            name=event.get("name") or f"template {event['id']}",
-            template=StorageLocation.from_event(event["template"]),
-            language=Languages(event.get("language") or settings.report_language),
-            target_file_name=event.get("target_file_name") or "",
-            target=StorageLocation.from_event(event["target"]) if event.get("target") else None,
-            commodity_charts_per_slide=event.get("commodity_charts_per_slide"),
-            email_subject=event.get("email_subject"),
-            kpis=kpis,
-        )
-
 
 # ------------------------------------------------------------------------------ #
-
-
-def _kpi_from_event(data: dict) -> KpiDefinition:
-    metric = data.get("metric")
-    if isinstance(metric, dict):
-        data = {**data, "metric": KpiMetric.from_dict(metric)}
-    return KpiDefinition(**data)
 
 
 def list_active_template_ids() -> list[int]:
@@ -291,17 +244,16 @@ RECIPIENT_COLUMNS = [
 ]
 
 
-def read_recipients(template_id: int, *, only_send_now: bool = False) -> pd.DataFrame:
-    """Recipient rows of a template joined with their active brand.
+def read_recipients(template_id: int, *, send_now_only: bool = True) -> pd.DataFrame:
+    """Recipient rows of a template that requested a deck (``send_now = 1``); the local
+    preview passes ``send_now_only=False`` to render every row.
 
     Adds a ``brand`` column holding the brand's ``filter_value``. Rows whose brand is
-    unknown or inactive and soft-deleted rows (``IsDeleted``) are dropped. ``send_now`` is
-    the only trigger.
+    unknown or inactive and soft-deleted rows (``IsDeleted``) are dropped.
     """
     columns, values = ["template_id", "IsDeleted"], [template_id, False]
-    if only_send_now:
-        columns.append("send_now")
-        values.append(True)
+    if send_now_only:
+        columns, values = columns + ["send_now"], values + [True]
     data = read_data(AutoreportRecipients, columns, values)
     if data is None or data.empty:
         return pd.DataFrame(columns=RECIPIENT_COLUMNS)

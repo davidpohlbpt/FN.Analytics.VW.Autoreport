@@ -33,7 +33,7 @@ from pptcreator.creator.get_config.get_kpi_deck_config import ReportRequest, get
 from pptcreator.creator.get_config.graph_get_config import graph_get_config
 from pptcreator.creator.send_email.send_email import send_email
 from pptcreator.infra import s3_sync
-from pptcreator.kpi.base import KpiSource, ReportPeriod
+from pptcreator.kpi.base import KpiSource
 from pptcreator.kpi.router import RoutingKpiSource
 from pptcreator.models.models import Templates
 from pptcreator.utils.read_data import read_data
@@ -124,24 +124,20 @@ class RenderResult:
 
 def plan_decks(
     *,
-    trigger: str,
     template_id: int | None = None,
-    current_period: str | ReportPeriod | None = None,
     run_id: str | None = None,
     template: TemplateConfig | None = None,
 ) -> list[ReportRequest]:
-    """Read the recipient table and build one ReportRequest per (brand, reference period).
+    """One ReportRequest per recipient row with ``send_now = 1``.
 
-    Every recipient row carries its own (mandatory) reference week; there is no default.
-    ``trigger='adhoc'`` only picks rows with ``send_now = 1``. The flag is NOT cleared
-    here; the caller (planner Lambda) does that once the requests were handed over.
+    The flag is NOT cleared here; the record step does that once the deck was sent.
     """
     template = template or get_template_config(template_id)
     run_id = run_id or str(uuid.uuid4())
 
-    recipients = read_recipients(template.id, only_send_now=(trigger == "adhoc"))
+    recipients = read_recipients(template.id)
     groups = group_recipients(recipients, template.id)
-    logging.info(f"{trigger}: {len(recipients)} recipient rows -> {len(groups)} deck(s) for template {template.id}")
+    logging.info(f"{len(recipients)} recipient row(s) with send_now -> {len(groups)} deck(s) for template {template.id}")
 
     requests: list[ReportRequest] = []
     for group in groups:
@@ -154,7 +150,7 @@ def plan_decks(
                     recipients=group.emails,
                     template_id=template.id,
                     run_id=run_id,
-                    trigger=trigger,
+                    trigger="adhoc",
                     recipient_ids=group.recipient_ids,
                 )
             )
@@ -315,18 +311,11 @@ def steer_kpi_deck_process(request: ReportRequest, source: KpiSource | None = No
     return run_deck(request, source)
 
 
-def steer_scheduled_kpi_decks(
-    source: KpiSource | None = None,
-    *,
-    trigger: str = "scheduled",
-    template_id: int | None = None,
-    current_period: str | ReportPeriod | None = None,
+def steer_send_now_decks(
+    source: KpiSource | None = None, *, template_id: int | None = None
 ) -> list[DeckOutcome]:
-    requests = plan_decks(
-        trigger=trigger,
-        template_id=template_id,
-        current_period=current_period,
-    )
+    """Local all-in-one run: render and send every deck with ``send_now = 1``."""
+    requests = plan_decks(template_id=template_id)
     if not requests:
         return []
     template = get_template_config(requests[0].template_id)
@@ -354,5 +343,5 @@ __all__ = [
     "render_deck",
     "run_deck",
     "steer_kpi_deck_process",
-    "steer_scheduled_kpi_decks",
+    "steer_send_now_decks",
 ]

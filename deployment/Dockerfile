@@ -36,14 +36,14 @@ ENV CA_BUNDLE_PATH=${LAMBDA_TASK_ROOT}/certs/ca-bundle.pem
 COPY pptcreator ./pptcreator
 RUN chmod -R a+rX ./pptcreator
 
-# pycore reads these at import time; the SAM template can override them.
+# pycore reads these at import time; Lambda environment variables override them.
 ENV APP_NAME=VwAutoreport \
     RESOURCE_TYPE=LOCAL \
     LOCAL_BLOB_DIR=/tmp/autoreport_data \
     APP_DB_NAME=ReportDB
 
-# Default = Lambda 2 (render). The plan/record functions override the command via the
-# Lambda ImageConfig (see deployment/template.yaml):
+# Default = Lambda 2 (render). The plan/record functions override the command in their
+# Lambda image configuration (CMD override):
 #   pptcreator.lambdas.plan.handler
 #   pptcreator.lambdas.record.handler
 # The send Lambda is not part of this image: it is a ZIP built from functions/send.

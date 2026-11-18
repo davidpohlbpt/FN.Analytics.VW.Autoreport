@@ -43,7 +43,6 @@ class PlanFailed(ValueError):
 def handler(event, context):
     event = normalise_event(event)
     log_start(context, event)
-    trigger = event.get("trigger") or "adhoc"
     template_ids = resolve_template_ids(event)
     run_id = event.get("run_id") or str(uuid.uuid4())
 
@@ -51,7 +50,7 @@ def handler(event, context):
     for template_id in template_ids:
         try:
             template = get_template_config(template_id)
-            requests += plan_decks(trigger=trigger, template=template, run_id=run_id)
+            requests += plan_decks(template=template, run_id=run_id)
         except Exception as exc:  # one broken template must not block the others
             logging.exception(f"Planning template {template_id} failed: {exc}")
             errors.append({"template_id": template_id, "error": f"{type(exc).__name__}: {exc}"})

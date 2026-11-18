@@ -110,26 +110,21 @@ def test_source_override(seed_control_tables, monkeypatch):  # noqa: F811
 
 def test_recipient_grouping(seed_control_tables):  # noqa: F811
     seed_control_tables("VW.pptx")
+    # the planner only reads rows with send_now = 1 (fixture: rows 2 and 4)
+    assert sorted(read_recipients(TEMPLATE_ID)["id"]) == [2, 4]
 
-    recipients = read_recipients(TEMPLATE_ID)
+    recipients = read_recipients(TEMPLATE_ID, send_now_only=False)  # local preview
     assert 7 not in set(recipients["id"])  # inactive brand dropped
     assert 8 not in set(recipients["id"])  # soft-deleted row dropped
-    assert 5 not in set(recipients["id"]) or not recipients[recipients["id"] == 5].empty
 
     groups = group_recipients(recipients, TEMPLATE_ID)
-    # one deck per row: two Audi rows with identical dates stay two decks
+    # one deck per row: two Audi rows with identical dates stay two decks; row 5 has no e-mail
     assert [(g.brand, g.report_week, g.comparison_week, g.emails, g.recipient_ids) for g in groups] == [
         ("Audi", "2025-11-28", "2025-11-18", ["a@x.de"], [1]),
         ("Audi", "2025-11-28", "2025-11-18", ["b@x.de"], [2]),
         ("Seat", "2025-11-11", "2025-09-24", ["c@x.de"], [3]),
         ("Seat", "2025-10-28", "2025-08-29", ["d@x.de"], [4]),
         ("Audi", "V01-C (47/2025)", "V01-B (46/2025)", ["A@x.de"], [6]),
-    ]
-
-    adhoc = group_recipients(read_recipients(TEMPLATE_ID, only_send_now=True), TEMPLATE_ID)
-    assert [(g.brand, g.emails, g.recipient_ids) for g in adhoc] == [
-        ("Audi", ["b@x.de"], [2]),
-        ("Seat", ["d@x.de"], [4]),
     ]
 
 

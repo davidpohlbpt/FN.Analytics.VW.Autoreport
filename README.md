@@ -10,51 +10,48 @@ file storage under `/tmp`, secrets from environment variables). `pycore` is unch
 
 ## Architecture
 
-Four Lambdas orchestrated by a Step Functions state machine
-(`deployment/state_machine.asl.json`). Plan, render and record run from one container
-image (pycore, ODBC driver, VPC access to SQL Server and DQN) with different handlers.
-Send is a separate ZIP function (`functions/send/sender`, standard library + boto3 only)
-without VPC, database or DQN access:
+An EventBridge schedule calls the plan Lambda every few minutes. Plan reads the recipient
+rows with `send_now = 1` and, only if there are any, starts the Step Function with the
+decks to send. Plan, render and record run from one container image (pycore, ODBC driver,
+VPC access to SQL Server and DQN) with different handlers. Send is a separate ZIP function
+(`functions/send/sender`, standard library + boto3 only) without VPC, database or DQN
+access. Lambdas, Step Function and schedule are created by hand in AWS.
 
 ```
-EventBridge (weekly) ──┐
-EventBridge (5 min)  ──┴──> Step Functions
-                              Plan   (Lambda 1, image, lambdas/plan.py)    control tables -> [ReportRequest]
-                              Map over requests (concurrency 2)
-                                Render (Lambda 2, image, lambdas/render.py)  one request -> deck in S3
-                                Send   (Lambda 3, ZIP, functions/send)       deck in S3 -> SES e-mail
-                              Record (Lambda 4, image, lambdas/record.py)  outcomes of all decks -> run log
+EventBridge (every 5 min, input {})
+  -> Plan   (Lambda 1, image, lambdas/plan.py)     send_now rows -> [request]; nothing to send -> stop
+     starts the Step Function (STATE_MACHINE_ARN) with the plan output:
+       Map over $.requests
+         Render (Lambda 2, image, lambdas/render.py)   one request -> deck in S3
+         Send   (Lambda 3, ZIP, functions/send)        deck in S3 -> SES e-mail
+       Record (Lambda 4, image, lambdas/record.py)    outcomes of all decks -> run log, clears send_now
 ```
 
 | Lambda | Handler | Input | Output | Side effects |
 |---|---|---|---|---|
-| 1 Plan | `pptcreator.lambdas.plan.handler` | `{}` (default `adhoc` = only `send_now = 1`; optional `trigger` `"scheduled"`, `template_ids`/`template_id`, `recipient_ids`) | `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids"}], "errors"}`; one request per recipient row, directly usable as render input. `has_requests = false` lets a Choice state end the execution | run log rows `processing` (the claim); rows with an open claim are skipped |
-| 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written `ReportRequest` without `template` (`deployment/events/render_request.json`; then the control tables are read) | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`) | deck in S3; run log `rendered`/`failed`; raises on failure |
+| 1 Plan | `pptcreator.lambdas.plan.handler` | `{}` (optional `template_ids`/`template_id`, `recipient_ids`) | `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids"}], "errors", "execution_arn"}`; one request per recipient row with `send_now = 1`, directly usable as render input | run log rows `processing` (the claim); rows with an open claim are skipped; starts the Step Function when `STATE_MACHINE_ARN` is set and there is something to send |
+| 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written one (`deployment/events/render_request.json`); template and KPI mappings are read from the control tables | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`, `request` incl. `recipients`) | deck in S3; run log `rendered`/`failed`; raises on failure |
 | 3 Send | `sender.app.handler` (ZIP) | the `RenderResult` as JSON (+ optional `recipients` override) | `{"status": "sent"\|"skipped", "request", "recipients", "message_id", "error"}` | SES mail; raises on failure |
-| 4 Record | `pptcreator.lambdas.record.handler` | `{"run_id", "results": [Map output]}` | `{"recorded", "sent", "skipped", "failed", "cleared"}` | run log `sent` / `skipped` / `failed`; `send_now` cleared for sent and skipped rows |
-| all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "manual"\|"scheduled"\|"adhoc", ...}` | summary per deck | render + send in one process (local runs only; needs `functions/send` on the path, which `poetry install` and pytest provide) |
+| 4 Record | `pptcreator.lambdas.record.handler` | `{"results": [Map output]}` | `{"recorded", "sent", "skipped", "failed", "cleared"}` | run log `sent` / `skipped` / `failed`; `send_now` cleared for sent and skipped rows |
+| all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "adhoc"\|"manual", ...}` | summary per deck | render + send in one process (local runs only; needs `functions/send` on the path, which `poetry install` and pytest provide) |
 
 The `RenderResult` is the contract between the image and the send ZIP: both sides only
 share JSON. `tests/unit/test_lambda_handler.py` feeds real render output into the send
 handler, and `tests/unit/sender/test_isolation.py` fails if the send package ever
 imports pycore, python-pptx, pandas or `pptcreator`.
 
-The plan Lambda reads the template and KPI mapping tables once per run and passes them
-on, so every deck of a run uses the same configuration and a failed deck can be replayed
-with its Step Functions input. Templates per run: event `template_ids`/`template_id` >
-`PLAN_TEMPLATE_IDS` > `DEFAULT_TEMPLATE_ID` > all active templates. Only the
-sender of a row gets its deck; the reference and current snapshot come from the recipient
-row, so a poller run and a manual run of the same row are identical. A template that fails
-to plan is reported in `errors` without blocking the others; if all fail, or the output
-would exceed the Step Functions payload limit, the plan Lambda raises before any side
-effect. `pptcreator.lambda_handler.plan_handler`/`render_handler`/`record_handler` remain
-as aliases.
+Templates per run: event `template_ids`/`template_id` > `PLAN_TEMPLATE_IDS` >
+`DEFAULT_TEMPLATE_ID` > all active templates. Only the sender of a row gets its deck; the
+reference and current week come from the recipient row. A template that fails to plan is
+reported in `errors` without blocking the others; if all fail, or the output would exceed
+the Step Functions payload limit, the plan Lambda raises before any side effect.
+`pptcreator.lambda_handler.plan_handler`/`render_handler`/`record_handler` remain as aliases.
 
 Lambda 2 is the core:
 
 ```
-render_deck(request, template snapshot)
-  - get_template_config        (only without snapshot: T_Control_Autoreport_Templates + _Mappings)
+render_deck(request)
+  - get_template_config        (T_Control_Autoreport_Templates + _Mappings)
   - s3_sync.download_template  (template_link s3://... -> pycore storage in /tmp)
   - get_kpi_deck_config
       - discover_chart_slots   (template: 2 overview charts, N commodity slots)
@@ -124,7 +121,7 @@ Key switches:
 | `SQL_CONN_SSM_PARAM` (+ `SQL_ODBC_DRIVER`, `SQL_ENCRYPT`, `SQL_TRUST_SERVER_CERTIFICATE`) | Lambda: read an ADO-style connection string (`Server=..;Initial Catalog=..;User ID=..;Password=..`) from SSM and set `LOCAL_SQLSERVER_CONN_STR`/`LOCAL_SQLSERVER_DB` |
 | `S3_OUTPUT_BUCKET` | upload decks to `s3://<S3_OUTPUT_BUCKET>/<S3_OUTPUT_PREFIX>/`, overriding `target_location` of the template row |
 | `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
-| `PLAN_TEMPLATE_IDS` | plan Lambda: templates per run, e.g. `1,3` or `all` (SAM parameter `PlanTemplateIds`) |
+| `PLAN_TEMPLATE_IDS` | plan Lambda: templates per run, e.g. `1,3` or `all` |
 | `STATE_MACHINE_ARN` | plan Lambda: when set, plan starts this Step Function (render → send → record) itself, only if rows with `send_now = 1` were planned; the execution input is the plan output. Needs `states:StartExecution`. Empty → plan only returns its output |
 | `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
 | `MAIL_ENABLED`, `SES_SENDER`, `SES_RECIPIENTS_MODE`, `SES_MAX_ATTACHMENT_MB` | e-mail; read by the send package (`functions/send/sender/config.py`) straight from the environment |
@@ -179,7 +176,7 @@ snapshot before the current one if that week has no data for the brand.
 The equivalent through the Lambda entry points:
 
 ```powershell
-poetry run pptcreator scheduled --current 2025-KW48
+poetry run pptcreator adhoc       # render and send every row with send_now = 1
 poetry run pptcreator manual --brand Audi --reference 2025-KW40 --current 2025-KW48
 ```
 
@@ -208,18 +205,18 @@ tests are written to `tests/result/` for visual inspection.
   ODBC Driver 18, then `requirements-docker.txt` (pinned, generated from `poetry.lock`)
   with `pycore` from the vendored wheel in `vendor/`. No credentials are needed at build
   time. The send Lambda is not in the image.
-- `functions/send/` -- code of the send Lambda; `sam deploy` zips this folder as is
-  (no third-party packages, boto3 comes with the runtime). If it ever needs a package,
-  add `functions/send/requirements.txt` and run `sam build` before `sam deploy`.
+- `functions/send/` -- code of the send Lambda; zip this folder as is and upload it
+  (no third-party packages, boto3 comes with the runtime). Handler `sender.app.handler`.
 - `deployment/certs/` -- drop internal root CA `.pem` files here if the DQN host or
   SQL Server use a VW-internal CA; they are bundled into the image and trusted
   automatically (never committed).
-- `deployment/template.yaml` -- SAM stack: image Lambdas in the VPC, send ZIP Lambda
-  outside it, S3 bucket, EventBridge rules (disabled by default), IAM, log groups.
-  Secrets are resolved from Secrets Manager and given to the image Lambdas only.
+- AWS resources (Lambdas, Step Function, EventBridge schedule, IAM) are created by hand.
+  Image Lambdas: plan `pptcreator.lambdas.plan.handler` (env `STATE_MACHINE_ARN`, needs
+  `states:StartExecution`), render `pptcreator.lambdas.render.handler`, record
+  `pptcreator.lambdas.record.handler`. Schedule: `rate(5 minutes)` -> plan Lambda, input `{}`.
 - `.github/workflows/deploy.yml` -- PRs and pushes to `main` run tests only. Tags `v*`
-  and manual runs also build, push to ECR, `sam deploy`, and upload the template to
-  the bucket (branches -> dev, tags `v*` -> prod).
+  and manual runs also build, push to ECR and point the Lambdas in `LAMBDA_FUNCTIONS`
+  at the new image (branches -> dev, tags `v*` -> prod).
 
 After changing dependencies: `poetry lock`, then `python deployment/export_requirements.py`.
 After a pycore update: see `vendor/README.md`.

@@ -93,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     current = ReportPeriod.parse(current_date)
     previous = ReportPeriod.parse(snapshots.previous_date(current_date))
 
-    groups = group_recipients(read_recipients(template.id), template.id)
+    groups = group_recipients(read_recipients(template.id, send_now_only=False), template.id)
     if args.brand:
         wanted = args.brand.strip().lower()
         groups = [g for g in groups if g.brand.strip().lower() == wanted]

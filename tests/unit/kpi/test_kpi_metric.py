@@ -1,12 +1,8 @@
 """KpiMetric: formatting, validation and loading from T_Control_Autoreport_KpiMetrics."""
 
-import dataclasses
-import json
-
 import pandas as pd
 import pytest
 
-from pptcreator.creator.get_config.get_autoreport_config import _kpi_from_event
 from pptcreator.kpi.kpi_metric import (
     KpiMetric,
     attach_metrics,
@@ -36,13 +32,6 @@ def test_invalid_metric_is_rejected():
         KpiMetric(kpi_key="x", metric_type="percent", numerator_columns=("y; DROP TABLE t",))
     with pytest.raises(ValueError, match="unknown metric_type"):
         KpiMetric(kpi_key="x", metric_type="median")
-
-
-def test_metric_survives_the_plan_to_render_event():
-    metric = KpiMetric(kpi_key=KPIS[1].id, metric_type="percent", numerator_columns=("BearbSynchron",), denominator_columns=("y",))
-    kpi = dataclasses.replace(KPIS[1], metric=metric)
-    event = json.loads(json.dumps(dataclasses.asdict(kpi)))
-    assert _kpi_from_event(event) == kpi
 
 
 def _row(id_, key, metric_type, **kw):

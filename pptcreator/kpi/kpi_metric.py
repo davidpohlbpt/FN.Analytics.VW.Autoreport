@@ -63,11 +63,6 @@ class KpiMetric:
         if unsafe:
             raise ValueError(f"{self.kpi_key}: invalid column name(s) {unsafe}.")
 
-    @classmethod
-    def from_dict(cls, data: dict) -> KpiMetric:
-        """Inverse of ``dataclasses.asdict`` (also after a JSON round trip)."""
-        return cls(**data)
-
     @property
     def empty_text(self) -> str | None:
         """Value text when there is no data / the denominator is 0.

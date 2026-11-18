@@ -18,7 +18,6 @@ from sender import app as send_app
 
 from pptcreator import lambda_handler
 from pptcreator.config import settings
-from pptcreator.creator.get_config.get_autoreport_config import get_template_config
 from pptcreator.creator.graph_steer_creation_process import current_calendar_week
 from pptcreator.kpi.registry import KPIS
 from pptcreator.lambdas import plan
@@ -28,7 +27,6 @@ from pptcreator.models.models import (
     AutoreportBrands,
     AutoreportRecipients,
     AutoreportRuns,
-    AutoreportTemplates,
 )
 from pptcreator.utils.read_data import read_data
 from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables  # noqa: F401
@@ -60,13 +58,19 @@ def _runs() -> pd.DataFrame:
     return read_data(AutoreportRuns, [], [])
 
 
+def _set_send_now(*recipient_ids: int) -> None:
+    table = AutoreportRecipients.__table__
+    with database.engine.begin() as con:
+        con.execute(sa.update(table).where(table.c.id.in_(recipient_ids)).values(send_now=True))
+
+
 # ------------------------------------------------------------------------------ #
 # Lambda 1
 # ------------------------------------------------------------------------------ #
 
 
 def test_plan_adhoc_picks_send_now_rows(stack):
-    out = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
 
     assert out["count"] == 2  # rows 2 (Audi) and 4 (Seat) have send_now = 1
     assert out["has_requests"] is True
@@ -88,11 +92,11 @@ def test_plan_adhoc_picks_send_now_rows(stack):
 
 
 def test_plan_skips_rows_with_an_open_claim(stack):
-    first = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    first = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     assert first["count"] == 2
 
     # the poller runs again before the first run finished: those rows must not be sent twice
-    second = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    second = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     assert second["count"] == 0 and second["requests"] == []
     assert second["has_requests"] is False  # Step Functions Choice: nothing to render
     assert len(_runs()) == 2
@@ -102,27 +106,13 @@ def test_plan_skips_rows_with_an_open_claim(stack):
         {"status": "failed", "step": "send", "request": r, "error": {"Error": "SendFailed", "Cause": "x"}}
         for r in first["requests"]
     ]}, None)
-    third = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    third = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     assert third["count"] == 2
 
 
-def test_plan_scheduled_plans_every_row(stack):
-    out = lambda_handler.plan_handler({"trigger": "scheduled", "template_id": TEMPLATE_ID}, None)
-
-    assert out["count"] == 5  # every valid row, one deck each
-    assert len({tuple(r["recipient_ids"]) for r in out["requests"]}) == 5
-
-
 def test_plan_recipient_id_filter(stack):
-    out = lambda_handler.plan_handler(
-        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "recipient_ids": [3]}, None
-    )
-    assert out["count"] == 1 and out["requests"][0]["recipients"] == ["c@x.de"]
-
-
-def test_plan_default_trigger_is_adhoc(stack):
-    out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    assert out["count"] == 2  # only the two send_now rows
+    out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID, "recipient_ids": [2]}, None)
+    assert out["count"] == 1 and out["requests"][0]["recipients"] == ["b@x.de"]
 
 
 def test_plan_starts_the_step_function_only_when_there_is_something_to_send(stack, monkeypatch):
@@ -160,14 +150,14 @@ def test_failed_step_function_start_releases_the_claims(stack, monkeypatch):
 def test_plan_template_ids_from_env_and_partial_failure(stack, monkeypatch):
     monkeypatch.setattr(settings, "plan_template_ids", f"{TEMPLATE_ID}, 99")
 
-    out = lambda_handler.plan_handler({"trigger": "adhoc"}, None)
+    out = lambda_handler.plan_handler({}, None)
 
     assert out["count"] == 2  # template 99 does not exist, the others are still planned
     assert [e["template_id"] for e in out["errors"]] == [99]
 
     # the event wins over the environment
     with pytest.raises(lambda_handler.PlanFailed, match="All templates failed"):
-        lambda_handler.plan_handler({"trigger": "scheduled", "template_ids": [99]}, None)
+        lambda_handler.plan_handler({"template_ids": [99]}, None)
 
 
 def test_plan_template_ids_all_and_default(stack, monkeypatch):
@@ -183,28 +173,17 @@ def test_plan_template_ids_all_and_default(stack, monkeypatch):
 def test_plan_payload_too_large_has_no_side_effects(stack, monkeypatch):
     monkeypatch.setattr(plan, "MAX_PAYLOAD_BYTES", 100)
     with pytest.raises(lambda_handler.PlanFailed, match="Step Functions"):
-        lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+        lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     assert _runs().empty  # no claim written when the payload would not fit
 
 
-def test_render_accepts_the_plan_output_and_an_optional_template_snapshot(stack):
-    request = lambda_handler.plan_handler(
-        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "recipient_ids": [3]}, None
-    )["requests"][0]
+def test_render_accepts_the_plan_output(stack):
+    request = lambda_handler.plan_handler({"template_id": TEMPLATE_ID, "recipient_ids": [2]}, None)["requests"][0]
     request["kpi_ids"] = ["bka_aktualisierung"]  # keep the test deck small
 
     out = lambda_handler.render_handler(request, None)
     assert out["status"] == "rendered"
-    assert out["request"]["recipients"] == ["c@x.de"]  # passed on to the send step
-
-    # a hand-written snapshot still wins over the control tables
-    snapshot = get_template_config(TEMPLATE_ID).to_event()
-    table = AutoreportTemplates.__table__
-    with database.engine.begin() as con:
-        con.execute(sa.update(table).values(is_active=False))
-    assert lambda_handler.render_handler({**request, "template": snapshot}, None)["status"] == "rendered"
-    with pytest.raises(lambda_handler.RenderFailed, match="not found or inactive"):
-        lambda_handler.render_handler(request, None)
+    assert out["request"]["recipients"] == ["b@x.de"]  # passed on to the send step
 
 
 # ------------------------------------------------------------------------------ #
@@ -350,7 +329,7 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
     )
 
     planned = lambda_handler.plan_handler(
-        {"trigger": "adhoc", "template_id": TEMPLATE_ID, "recipient_ids": [99]},
+        {"template_id": TEMPLATE_ID, "recipient_ids": [99]},
         None,
     )
     request = planned["requests"][0]
@@ -429,19 +408,14 @@ def test_send_handler_failed_render_is_skipped():
 
 
 def test_state_machine_round_trip(stack):
-    plan = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    _set_send_now(3)  # a third row whose render fails below
+    plan = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
+    by_row = {r["recipient_ids"][0]: r for r in plan["requests"]}
 
-    decks = []
-    for request in plan["requests"]:
-        render = lambda_handler.render_handler(request, None)
-        decks.append(send_app.handler(render, None))
-    # what the Catch of a failed render deck hands to the record step: a row with
-    # send_now = 0 that this run also claimed, so the run log already has its row
-    pending = lambda_handler.plan_handler(
-        {"trigger": "scheduled", "template_id": TEMPLATE_ID, "recipient_ids": [3]}, None
-    )["requests"][0]
+    decks = [send_app.handler(lambda_handler.render_handler(by_row[i], None), None) for i in (2, 4)]
+    # what the Catch of a failed render deck hands to the record step
     decks.append({
-        "status": "failed", "step": "render", "request": pending,
+        "status": "failed", "step": "render", "request": by_row[3],
         "error": {"Error": "RenderFailed", "Cause": json.dumps({"errorMessage": "no data"})},
     })
 
@@ -469,7 +443,7 @@ def test_state_machine_round_trip(stack):
 
 
 def test_skip_leaves_send_now_cleared_but_row_not_resent(stack):
-    plan = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    plan = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     request = plan["requests"][0]
 
     # MAIL_ENABLED=false in the send Lambda -> skipped, still a finished run
@@ -483,7 +457,7 @@ def test_skip_leaves_send_now_cleared_but_row_not_resent(stack):
 
 
 def test_record_handler_failure_keeps_send_now(stack):
-    plan = lambda_handler.plan_handler({"trigger": "adhoc", "template_id": TEMPLATE_ID}, None)
+    plan = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     by_email = {r["recipients"][0]: r for r in plan["requests"]}
 
     lambda_handler.record_handler({"results": [
@@ -513,9 +487,9 @@ def test_all_in_one_manual(stack):
     assert summary["sent"] == 1 and summary["results"][0]["s3_key"]
 
 
-def test_all_in_one_scheduled(stack):
-    summary = lambda_handler.run({"mode": "scheduled", "template_id": TEMPLATE_ID})
-    assert summary["decks"] == 5 and summary["sent"] == 5  # one deck per recipient row
+def test_all_in_one_adhoc(stack):
+    summary = lambda_handler.run({"mode": "adhoc", "template_id": TEMPLATE_ID})
+    assert summary["decks"] == 2 and summary["sent"] == 2  # one deck per send_now row
 
 
 def test_all_in_one_errors():

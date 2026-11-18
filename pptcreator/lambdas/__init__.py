@@ -1,6 +1,6 @@
-"""Lambdas of the state machine that run from the render image (see deployment/state_machine.asl.json).
+"""Lambdas that run from the render image.
 
-``plan.handler``    Lambda 1: control tables -> list of decks (ReportRequest + template snapshot)
+``plan.handler``    Lambda 1: send_now rows -> decks to send; starts the Step Function
 ``render.handler``  Lambda 2: one deck -> .pptx in S3
 ``record.handler``  Lambda 4: outcomes of all decks -> run log (after the Map)
 
