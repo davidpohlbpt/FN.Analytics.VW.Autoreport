@@ -41,16 +41,16 @@ def engine(monkeypatch, tmp_path):
         con.exec_driver_sql(
             "CREATE TABLE cfg.overview (AnalyseZeitpunkt DATE, EK_ORG TEXT, MOD TEXT, COM TEXT, "
             + ", ".join(f"{c} INT" for c in COLUMNS)
-            + ", UpdatedAvgAge REAL, y INT, BearbSynchron INT, GrauUVB INT, RedOver52 INT)"
+            + ", UpdatedAvgAge REAL, y INT, BearbSynchron INT, GrauUVB INT, RedOver52 INT, LAUFKENNUNG TEXT, LAUF_KW TEXT)"
         )
         rows = []
-        for date, factor in (("2025-11-28", 1), ("2025-09-24", 2)):
+        for date, factor, run, week in (("2025-11-28", 1, "V01-D", "48/2025"), ("2025-09-24", 2, "V11-D", "39/2025")):
             for com, grau, red in (("BC", 1, 0), ("BI", None, 5)):
-                rows.append((date, "Audi", "Alle", com, *(factor * v for v in (10, 5, 4, 3, 2, 1)), 400.0, 20 * factor, 9 * factor, grau, red))
-            rows.append((date, "Audi", "OT", "BC", *(99,) * 6, 1.0, 99, 99, 1, 99))  # other MOD, must be ignored
-            rows.append((date, "SEAT", "Alle", "BC", *(1,) * 6, 100.0, 1, 1, 1, 1))
+                rows.append((date, "Audi", "Alle", com, *(factor * v for v in (10, 5, 4, 3, 2, 1)), 400.0, 20 * factor, 9 * factor, grau, red, run, week))
+            rows.append((date, "Audi", "OT", "BC", *(99,) * 6, 1.0, 99, 99, 1, 99, run, week))  # other MOD, must be ignored
+            rows.append((date, "SEAT", "Alle", "BC", *(1,) * 6, 100.0, 1, 1, 1, 1, run, week))
         con.exec_driver_sql(
-            "INSERT INTO cfg.overview VALUES (" + ",".join("?" * (4 + len(COLUMNS) + 5)) + ")", rows
+            "INSERT INTO cfg.overview VALUES (" + ",".join("?" * (4 + len(COLUMNS) + 7)) + ")", rows
         )
         con.exec_driver_sql("CREATE TABLE cfg.dim (DimID INT, ChartID INT, ColumnName TEXT, DataType TEXT, Aggregation TEXT)")
         con.exec_driver_sql("CREATE TABLE cfg.aes (AestheticID INT, ChartID INT, Aesthetic TEXT, DimID INT, GeomID INT)")
@@ -119,6 +119,23 @@ def test_date_periods_and_previous(engine):
     assert str(result.reference.period) == "KW39/2025"
     with pytest.raises(ValueError, match="before"):
         source.previous_date(dt.date(2025, 9, 24))
+
+
+def test_run_periods_resolve_by_laufkennung_and_lauf_kw(engine):
+    source = ls.LeitstandKpiSource(engine)
+    assert source.resolve_date(ReportPeriod.parse("V01-D (48/2025)")) == dt.date(2025, 11, 28)
+    # unknown run label -> its calendar week (2025-KW48 holds the 2025-11-28 snapshot)
+    assert source.resolve_date(ReportPeriod.parse("V99 (48/2025)")) == dt.date(2025, 11, 28)
+    with pytest.raises(ValueError, match="No Control Center snapshot"):
+        source.resolve_date(ReportPeriod.parse("V01-D (48/2020)"))  # nothing in or before that week
+
+    result = source.fetch(DEFINITION, "Audi", ReportPeriod.parse("V01-D (48/2025)"), ReportPeriod.parse("V11-D (39/2025)"))
+    assert str(result.current.period) == "KW48/2025"
+    assert result.current.run_label == "V01-D (48/2025)"
+    assert result.reference.run_label == "V11-D (39/2025)"
+    # a date request still reports the run of its snapshot
+    by_date = source.fetch(DEFINITION, "Audi", ReportPeriod.parse("2025-11-28"), ReportPeriod.parse("2025-09-24"))
+    assert by_date.current.run_label == "V01-D (48/2025)"
 
 
 def test_unknown_brand_raises(engine):

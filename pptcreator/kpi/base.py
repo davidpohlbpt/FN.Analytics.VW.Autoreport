@@ -65,9 +65,11 @@ class KpiDefinition:
 
 @dataclasses.dataclass(frozen=True)
 class ReportPeriod:
-    """A calendar week (``KW37``, ``2026-KW37``) or an exact snapshot date (``2025-11-18``).
+    """A calendar week (``KW37``, ``2026-KW37``), an exact snapshot date (``2025-11-18``)
+    or a Control Center run as shown in the frontend dropdown (``V01-B (46/2025)`` =
+    ``LAUFKENNUNG (LAUF_KW)``).
 
-    Dates address one AnalyseZeitpunkt directly; weeks are resolved by the source.
+    Dates address one AnalyseZeitpunkt directly; weeks and runs are resolved by the source.
     """
 
     label: str
@@ -81,6 +83,12 @@ class ReportPeriod:
         text = str(value).strip()
         if not text:
             raise ValueError("Report period must not be empty.")
+        run = _RUN.fullmatch(text)
+        if run:
+            week = int(run.group("week"))
+            if not 1 <= week <= 53:
+                raise ValueError(f"Invalid week in run {value!r}.")
+            return cls(label=f"{run.group('run')} ({week}/{run.group('year')})")
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
             try:
                 dt.date.fromisoformat(text)
@@ -89,7 +97,8 @@ class ReportPeriod:
             return cls(label=text)
         if not re.fullmatch(r"(\d{4}-)?KW\d{1,2}", text, flags=re.IGNORECASE):
             raise ValueError(
-                f"Unsupported period {value!r}; expected e.g. 'KW37', '2026-KW37' or '2025-11-18'."
+                f"Unsupported period {value!r}; expected e.g. 'V01-B (46/2025)', 'KW37', "
+                "'2026-KW37' or '2025-11-18'."
             )
         year, _, week = text.upper().rpartition("KW")
         return cls(label=f"{year}KW{int(week):02d}")
@@ -102,15 +111,29 @@ class ReportPeriod:
         return None
 
     @property
+    def run(self) -> tuple[str, str] | None:
+        """(LAUFKENNUNG, LAUF_KW) for run periods, e.g. ('V01-B', '46/2025'), else None."""
+        match = _RUN.fullmatch(self.label)
+        if match is None:
+            return None
+        return match.group("run"), f"{int(match.group('week'))}/{match.group('year')}"
+
+    @property
     def display(self) -> str:
-        """Short label for headlines: 'KW47/2025' for dates, the label for weeks."""
+        """Short label for headlines: 'KW47/2025' for dates and runs, the label for weeks."""
         if self.date is not None:
             year, week, _ = self.date.isocalendar()
             return f"KW{week:02d}/{year}"
+        if self.run is not None:
+            week, year = self.run[1].split("/")
+            return f"KW{int(week):02d}/{year}"
         return self.label
 
     def __str__(self) -> str:
         return self.label
+
+
+_RUN = re.compile(r"(?P<run>[A-Za-z0-9][A-Za-z0-9_-]*)\s*\(\s*(?P<week>\d{1,2})\s*/\s*(?P<year>\d{4})\s*\)")
 
 
 @dataclasses.dataclass
@@ -132,6 +155,10 @@ class KpiSnapshot:
     source does not support the metric; the headline uses ``average_text`` instead."""
 
     commodity_metric_text: dict[str, str] = dataclasses.field(default_factory=dict)
+
+    run_label: str | None = None
+    """Control Center run of the snapshot, 'LAUFKENNUNG (LAUF_KW)', e.g. 'V01-B (46/2025)';
+    None if the source does not know it."""
 
     def validate(self, definition: KpiDefinition) -> None:
         _validate_rows(self.total_rows, definition, f"{definition.id}/{self.period}/total")

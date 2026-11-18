@@ -9,8 +9,8 @@ out: {"run_id", "trigger", "template_ids", "count", "skipped", "errors",
 
 ``adhoc`` picks the recipient rows with ``send_now = 1``; that flag is set and cleared by
 the frontend and by the record step, never here. Every request is one recipient row:
-the two snapshot dates come from ``primary_date`` / ``reference_date`` and are passed
-through unvalidated to the KPI source.
+the two runs come from ``report_week`` / ``comparison_week`` (e.g. 'V01-B (46/2025)')
+and are resolved to snapshots by the KPI source.
 
 Each request carries the full template config (template link, KPI definitions, file
 name and subject pattern), so the whole run uses one consistent snapshot and the render

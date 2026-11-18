@@ -1,6 +1,5 @@
 """Seeds the T_Control_Autoreport_* tables in pycore's in-memory test database."""
 
-import datetime as dt
 
 import pandas as pd
 import pytest
@@ -46,24 +45,23 @@ def brand_rows() -> list[dict]:
 
 
 def recipient_rows() -> list[dict]:
-    now = dt.datetime(2026, 11, 11, 12, 0, 0)
-
-    def row(id_, email, brand_id, primary, reference, send_now=False):
+    def row(id_, email, brand_id, primary, reference, send_now=False, deleted=False):
         return {
             "id": id_, "template_id": TEMPLATE_ID, "email": email, "brand_id": brand_id,
-            "primary_date": primary, "reference_date": reference, "send_now": send_now,
-            "last_edited_at": now,
+            "report_week": primary, "comparison_week": reference, "send_now": send_now,
+            "IsDeleted": deleted,
         }
 
-    # primary/reference are AnalyseZeitpunkt-style dates, as the frontend stores them
+    # Mostly AnalyseZeitpunkt-style dates; row 6 uses the frontend dropdown format
     return [
         row(1, "a@x.de", AUDI, "2025-11-28", "2025-11-18"),
         row(2, "b@x.de", AUDI, "2025-11-28", "2025-11-18", send_now=True),
         row(3, "c@x.de", SEAT, "2025-11-11", "2025-09-24"),
         row(4, "d@x.de", SEAT, "2025-10-28", "2025-08-29", send_now=True),
         row(5, "", SKODA, "2025-10-28", "2025-08-29"),          # missing email
-        row(6, "A@x.de", AUDI, "2025-11-18", "2025-11-11"),     # same brand, other dates
+        row(6, "A@x.de", AUDI, "V01-C (47/2025)", "V01-B (46/2025)"),  # same brand, other runs
         row(7, "e@x.de", PORSCHE, "2025-11-28", "2025-11-18"),  # inactive brand
+        row(8, "f@x.de", AUDI, "2025-11-28", "2025-11-18", send_now=True, deleted=True),  # soft-deleted
     ]
 
 

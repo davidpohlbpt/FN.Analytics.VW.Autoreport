@@ -310,11 +310,13 @@ class AutoreportKpiMetrics(DeclarativeBase):
 
 
 class AutoreportRecipients(DeclarativeBase):
-    """One row per deck a user wants: template + brand + two snapshot dates.
+    """One row per deck a user wants: template + brand + two Control Center runs.
 
     The frontend maintains this table; the ``send_now`` flag is the only trigger of a
-    deck. Dates are the frontend's own strings (``YYYY-MM-DD`` = AnalyseZeitpunkt) and
-    are passed through unvalidated to the KPI source.
+    deck. The weeks are the frontend dropdown strings (``V01-B (46/2025)`` =
+    ``LAUFKENNUNG (LAUF_KW)``, see dbo.V_Autoreport_DropdownValues); dates
+    (``YYYY-MM-DD``) and ``2025-KW46`` are accepted as well. They are passed through to
+    the KPI source, which resolves the snapshot.
     """
 
     __tablename__ = "T_Control_Autoreport_Recipients"
@@ -332,16 +334,17 @@ class AutoreportRecipients(DeclarativeBase):
         sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Brands.id")
     )
 
-    primary_date: Mapped[str] = mapped_column(sa.String(30))
-    """Current snapshot, e.g. '2025-11-28' (AnalyseZeitpunkt), mandatory"""
+    report_week: Mapped[str] = mapped_column(sa.String(50))
+    """Current run, e.g. 'V01-D (48/2025)', mandatory"""
 
-    reference_date: Mapped[str] = mapped_column(sa.String(30))
-    """Comparison snapshot, e.g. '2025-10-28', mandatory"""
+    comparison_week: Mapped[str] = mapped_column(sa.String(50))
+    """Comparison run, e.g. 'V01-B (46/2025)', mandatory"""
 
     send_now: Mapped[bool | None] = mapped_column(default=False)
     """Set by the frontend; cleared by the record step once the mail was sent"""
 
-    last_edited_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)
+    IsDeleted: Mapped[bool] = mapped_column(default=False)
+    """Soft delete of the frontend; deleted rows are never planned"""
 
 
 class AutoreportRuns(DeclarativeBase):

@@ -7,39 +7,49 @@
 SET NOCOUNT ON;
 
 -- ------------------------------- Recipients -------------------------------- #
-IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'primary_date') IS NULL
-    ALTER TABLE control.T_Control_Autoreport_Recipients ADD primary_date NVARCHAR(30) NULL;
-IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'reference_date') IS NULL
-    ALTER TABLE control.T_Control_Autoreport_Recipients ADD reference_date NVARCHAR(30) NULL;
-
--- Legacy week columns cannot be mapped to an AnalyseZeitpunkt automatically. Fail loudly
--- while any row still lacks a date instead of inventing one.
-IF EXISTS (SELECT 1 FROM control.T_Control_Autoreport_Recipients
-           WHERE primary_date IS NULL OR reference_date IS NULL)
+-- Superseded by 006_dropdown_runs.sql: the frontend owns this table with report_week /
+-- comparison_week. Only stages that still have the legacy week columns of 001 (and no
+-- report_week) run this section; column references go through EXEC so the batch also
+-- compiles where the columns do not exist.
+IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'report_week') IS NOT NULL
+    PRINT 'Recipients already use report_week / comparison_week (frontend); section skipped.';
+ELSE
 BEGIN
-    THROW 50000, 'Recipient rows have no primary_date/reference_date. Fill both with AnalyseZeitpunkt values (YYYY-MM-DD) first; no column was dropped.', 1;
+    IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'primary_date') IS NULL
+        ALTER TABLE control.T_Control_Autoreport_Recipients ADD primary_date NVARCHAR(30) NULL;
+    IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'reference_date') IS NULL
+        ALTER TABLE control.T_Control_Autoreport_Recipients ADD reference_date NVARCHAR(30) NULL;
+
+    -- Legacy week columns cannot be mapped to an AnalyseZeitpunkt automatically. Fail loudly
+    -- while any row still lacks a date instead of inventing one.
+    DECLARE @missing INT;
+    EXEC sp_executesql
+        N'SELECT @n = COUNT(*) FROM control.T_Control_Autoreport_Recipients WHERE primary_date IS NULL OR reference_date IS NULL',
+        N'@n INT OUTPUT', @n = @missing OUTPUT;
+    IF @missing > 0
+        THROW 50000, 'Recipient rows have no primary_date/reference_date. Fill both with AnalyseZeitpunkt values (YYYY-MM-DD) first; no column was dropped.', 1;
+
+    IF EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID('control.T_Control_Autoreport_Recipients')
+                 AND name = 'primary_date' AND is_nullable = 1)
+        ALTER TABLE control.T_Control_Autoreport_Recipients ALTER COLUMN primary_date NVARCHAR(30) NOT NULL;
+    IF EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID('control.T_Control_Autoreport_Recipients')
+                 AND name = 'reference_date' AND is_nullable = 1)
+        ALTER TABLE control.T_Control_Autoreport_Recipients ALTER COLUMN reference_date NVARCHAR(30) NOT NULL;
+
+    -- is_active is replaced by send_now: inactive rows must never be picked up by the poller
+    IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'is_active') IS NOT NULL
+    BEGIN
+        EXEC (N'UPDATE control.T_Control_Autoreport_Recipients SET send_now = 0 WHERE is_active = 0');
+        ALTER TABLE control.T_Control_Autoreport_Recipients DROP COLUMN is_active;
+    END
+
+    IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'reference_week') IS NOT NULL
+        ALTER TABLE control.T_Control_Autoreport_Recipients DROP COLUMN reference_week;
+    IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'reference_year') IS NOT NULL
+        ALTER TABLE control.T_Control_Autoreport_Recipients DROP COLUMN reference_year;
 END
-
-IF EXISTS (SELECT 1 FROM sys.columns
-           WHERE object_id = OBJECT_ID('control.T_Control_Autoreport_Recipients')
-             AND name = 'primary_date' AND is_nullable = 1)
-    ALTER TABLE control.T_Control_Autoreport_Recipients ALTER COLUMN primary_date NVARCHAR(30) NOT NULL;
-IF EXISTS (SELECT 1 FROM sys.columns
-           WHERE object_id = OBJECT_ID('control.T_Control_Autoreport_Recipients')
-             AND name = 'reference_date' AND is_nullable = 1)
-    ALTER TABLE control.T_Control_Autoreport_Recipients ALTER COLUMN reference_date NVARCHAR(30) NOT NULL;
-
--- is_active is replaced by send_now: inactive rows must never be picked up by the poller
-IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'is_active') IS NOT NULL
-BEGIN
-    UPDATE control.T_Control_Autoreport_Recipients SET send_now = 0 WHERE is_active = 0;
-    ALTER TABLE control.T_Control_Autoreport_Recipients DROP COLUMN is_active;
-END
-
-IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'reference_week') IS NOT NULL
-    ALTER TABLE control.T_Control_Autoreport_Recipients DROP COLUMN reference_week;
-IF COL_LENGTH('control.T_Control_Autoreport_Recipients', 'reference_year') IS NOT NULL
-    ALTER TABLE control.T_Control_Autoreport_Recipients DROP COLUMN reference_year;
 
 -- The unique constraint on the week columns would block one deck per row with identical dates
 IF EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_Autoreport_Recipients'
@@ -61,9 +71,10 @@ IF COL_LENGTH('control.T_Control_Autoreport_Runs', 'primary_date') IS NULL
 IF COL_LENGTH('control.T_Control_Autoreport_Runs', 'reference_date') IS NULL
     ALTER TABLE control.T_Control_Autoreport_Runs ADD reference_date NVARCHAR(30) NULL;
 
--- Keep the old period strings visible in the new columns
-UPDATE control.T_Control_Autoreport_Runs SET primary_date = current_period WHERE primary_date IS NULL;
-UPDATE control.T_Control_Autoreport_Runs SET reference_date = reference_period WHERE reference_date IS NULL;
+-- Keep the old period strings visible in the new columns (EXEC: the columns may only have
+-- been added above, in this same batch)
+EXEC (N'UPDATE control.T_Control_Autoreport_Runs SET primary_date = current_period WHERE primary_date IS NULL');
+EXEC (N'UPDATE control.T_Control_Autoreport_Runs SET reference_date = reference_period WHERE reference_date IS NULL');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Autoreport_Runs_OpenClaim'
                AND object_id = OBJECT_ID('control.T_Control_Autoreport_Runs'))

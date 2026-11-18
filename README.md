@@ -71,7 +71,8 @@ Config Center) is still present and used by the older tests.
 ## Control tables (ReportDB, schema `control`)
 
 DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`,
-per-brand presentation in `004_brand_policy.sql`, value under each donut in `005_kpi_metrics.sql`.
+per-brand presentation in `004_brand_policy.sql`, value under each donut in `005_kpi_metrics.sql`,
+week dropdowns and the frontend's recipient columns in `006_dropdown_runs.sql`.
 
 | Table | Purpose | Key columns |
 |---|---|---|
@@ -81,7 +82,8 @@ per-brand presentation in `004_brand_policy.sql`, value under each donut in `005
 | `T_Control_Autoreport_Brands` | brand master list (frontend dropdown) | `brand_name` (display), `filter_value` (`EK_ORG` value), `is_active` |
 | `T_Control_Autoreport_BrandCommodities` | per-brand commodity presentation | `brand_id` (FK Brands), `com_source` (`COM` in `T_RESULT_Leitstand_Overview`), `com_label` (headline label, enables renames), `sort_order`, `show_if_zero`, `is_active`. **No active rows for a brand ⇒ default behaviour** (all COMs, source labels/order, zeros skipped). Rows ⇒ whitelist + rename + order + zero-fill |
 | `T_Control_Autoreport_BrandFeatures` | per-brand feature switches | `brand_id` (FK Brands), `feature_key`, `feature_value` (`''` = explicitly off), `is_active`. **No active rows ⇒ feature off.** Supported key: `footnote_text` = text of the template's `{footnote}` token, so only that brand shows a footnote. Unknown keys are ignored with a warning |
-| `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_id` (FK Brands), `primary_date` + `reference_date` (AnalyseZeitpunkt strings, e.g. `2025-11-28`, **mandatory**, passed to the KPI source unvalidated), `send_now`, `last_edited_at`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and dates; two rows with the same brand and dates write the same file name (later overwrites earlier) |
+| `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_id` (FK Brands), `report_week` + `comparison_week` (**mandatory**; the dropdown string `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`; dates `2025-11-28` and `2025-KW46` are accepted too), `send_now`, `IsDeleted` (soft delete, never planned). The backend splits the run string and finds the snapshot by `LAUFKENNUNG` + `LAUF_KW` in `T_RESULT_Leitstand_Overview`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and weeks; two rows with the same brand and weeks write the same file name (later overwrites earlier) |
+| `dbo.V_Autoreport_DropdownValues` | frontend dropdowns (`006_dropdown_runs.sql`) | active brands; `report_week` = every run in `T_RESULT_Leitstand_Overview` as `LAUFKENNUNG (LAUF_KW)`, `comparison_week` = the same without the latest run, `sort_date` = the run's AnalyseZeitpunkt (the frontend sorts by it, newest first, through its data source config `T_CONTROL_Report_DataSourceColumns` (data source 9502, `OrderBy`/`OrderParameter`), also set by 006; a view cannot carry an order). Read live, so a new weekly load appears automatically; snapshots without `LAUFKENNUNG` are not offered. `T_Control_Autoreport_Weeks` is no longer used |
 | `T_Control_Autoreport_Runs` | audit log and the claim that prevents double sends | `run_id`, `template_id`, `user_email`, `recipient_id`, `brand`, `primary_date`, `reference_date`, `status` (`processing`/`rendered`/`sent`/`skipped`/`failed`), `s3_key`, `message_id`, `error` |
 
 Data sources per KPI:
@@ -253,7 +255,9 @@ docker push <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
 - Template slide 1 must hold exactly two charts (reference, current); template slide 2
   holds the commodity slots and is repeated when a brand has more commodities than slots.
 - Other non-empty text boxes (e.g. `Targets` and the data source line) are copied as is,
-  with `{brand}`, `{week}` (current week), `{laufkennung}` (fixed `V11` for now) and
+  with `{brand}`, `{week}` (current week), `{laufkennung}` (the current snapshot's
+  `LAUFKENNUNG`, e.g. `V01-B`), `{datenquelle_run}` (current run as
+  `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`; the week label if the run is unknown) and
   `{target_label1|2}` / `{target_text1|2}` (empty for now) filled in. Unknown
   placeholders stay visible. Empty boxes such as `Chart 2 Status` are not rendered.
 - `{footnote}` holds the brand's `footnote_text` from
@@ -262,5 +266,6 @@ docker push <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
   literal `{footnote}` and no empty text box ever reaches the deck. Put the token on the
   slides the footnote should appear on; it is currently on slide 2 only.
 - `{kpi_explanation}` holds the KPI's `explanation_text` from
-  `control.T_Control_Autoreport_KpiMetrics` on the overview slide (template slide 1) and is
-  empty on detail slides, so the shape is removed there and for KPIs without a text.
+  `control.T_Control_Autoreport_KpiMetrics` on the overview slide (template slide 1),
+  prefixed with `* `; the value under the overview donuts then ends with `*` (e.g. `45 %*`).
+  It is empty on detail slides, so the shape is removed there and for KPIs without a text.

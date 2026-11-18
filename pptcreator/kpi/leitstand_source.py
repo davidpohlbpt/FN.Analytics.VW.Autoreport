@@ -85,7 +85,7 @@ class LeitstandKpiSource:
         self._engine = engine
         self.language = language.upper()
         self.with_average = with_average
-        self._dates: list[dt.date] | None = None
+        self._runs: dict[dt.date, str | None] | None = None
 
     @property
     def engine(self):
@@ -135,11 +135,27 @@ class LeitstandKpiSource:
     # -------------------------------------------------------------------------- #
 
     def available_dates(self) -> list[dt.date]:
-        if self._dates is None:
-            sql = sa.text(f"SELECT DISTINCT AnalyseZeitpunkt FROM {OVERVIEW_TABLE} ORDER BY AnalyseZeitpunkt")
+        return sorted(self._load_runs())
+
+    def run_label(self, snapshot_date: dt.date) -> str | None:
+        """'V01-B (46/2025)' of a snapshot; None for snapshots without LAUFKENNUNG."""
+        return self._load_runs().get(snapshot_date)
+
+    def _load_runs(self) -> dict[dt.date, str | None]:
+        """AnalyseZeitpunkt -> 'LAUFKENNUNG (LAUF_KW)' (one run per snapshot in the data)."""
+        if self._runs is None:
+            sql = sa.text(
+                f"SELECT AnalyseZeitpunkt, MAX(LAUFKENNUNG) AS run, MAX(LAUF_KW) AS week "
+                f"FROM {OVERVIEW_TABLE} GROUP BY AnalyseZeitpunkt"
+            )
             with self.engine.connect() as con:
-                self._dates = [_as_date(r[0]) for r in con.execute(sql) if r[0] is not None]
-        return self._dates
+                rows = con.execute(sql).all()
+            self._runs = {
+                _as_date(day): (f"{str(run).strip()} ({str(week).strip()})" if run and week else None)
+                for day, run, week in rows
+                if day is not None
+            }
+        return self._runs
 
     def latest_date(self) -> dt.date:
         dates = self.available_dates()
@@ -155,6 +171,15 @@ class LeitstandKpiSource:
 
     def resolve_date(self, period: ReportPeriod) -> dt.date:
         dates = self.available_dates()
+        if period.run is not None:
+            # The exact run first (LAUFKENNUNG + LAUF_KW); otherwise the week in the brackets
+            matches = [d for d in dates if self.run_label(d) == str(period)]
+            if matches:
+                return matches[-1]
+            week, year = period.run[1].split("/")
+            fallback = ReportPeriod.parse(f"{year}-KW{int(week):02d}")
+            logging.warning(f"No snapshot for run {period}; resolving its calendar week {fallback} instead.")
+            return self.resolve_date(fallback)
         if period.date is not None:
             if period.date in dates:
                 return period.date
@@ -243,6 +268,7 @@ class LeitstandKpiSource:
             commodity_average_text=commodity_avg,
             metric_text=metric_text,
             commodity_metric_text=commodity_metric,
+            run_label=self.run_label(snapshot_date),
         )
 
     # -------------------------------------------------------------------------- #
@@ -353,6 +379,8 @@ def _period_label(period: ReportPeriod, snapshot: dt.date) -> str:
     """Headline label; the actual snapshot week when it differs from the requested one."""
     year, week, _ = snapshot.isocalendar()
     actual = f"KW{week:02d}"
+    if period.run is not None:
+        return period.display  # the run's LAUF_KW, same week as in the Datenquelle line
     if period.date is not None:
         return f"{actual}/{year}"
     requested = str(period).split("-")[-1]

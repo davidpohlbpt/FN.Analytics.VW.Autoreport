@@ -305,10 +305,10 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
                     "template_id": TEMPLATE_ID,
                     "email": "vw@example.com",
                     "brand_id": VW_PKW_ID,
-                    "primary_date": "2025-11-28",
-                    "reference_date": "2025-11-18",
+                    "report_week": "2025-11-28",
+                    "comparison_week": "2025-11-18",
                     "send_now": True,
-                    "last_edited_at": None,
+                    "IsDeleted": False,
                 }
             ]
         ),

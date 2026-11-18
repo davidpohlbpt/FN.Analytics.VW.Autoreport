@@ -23,7 +23,7 @@ from pptcreator.models.enum import ChartObjects, ChartType
 OVERVIEW_SLIDE = 0
 DETAIL_SLIDE = 1
 
-# Fixed until the run identifier comes from the KPI source
+# Fallback for {laufkennung} when the KPI source does not know the snapshot's run
 LAUFKENNUNG = "V11"
 
 
@@ -126,12 +126,15 @@ def _text_values(result: KpiResult, brand_policy: "BrandPolicy | None" = None) -
 
     ``footnote`` is always present: an empty string blanks the token, so brands without a
     footnote row never show a literal ``{footnote}`` on the slide. ``kpi_explanation`` is
-    added per slide by the caller (overview slide only).
+    added per slide by the caller (overview slide only). ``datenquelle_run`` is the current
+    snapshot's run, 'V01-B (46/2025)'; the week label when the source does not know it.
     """
+    run_label = result.current.run_label
     return {
         "brand": result.brand,
         "week": _week(result.current.period),
-        "laufkennung": LAUFKENNUNG,
+        "laufkennung": run_label.split(" (")[0] if run_label else LAUFKENNUNG,
+        "datenquelle_run": run_label or _week(result.current.period),
         "footnote": brand_policy.footnote_text if brand_policy else "",
         "target_label1": "",
         "target_text1": "",
@@ -165,15 +168,29 @@ def _uses_metric(result: KpiResult, snapshot: KpiSnapshot) -> bool:
     return result.definition.metric is not None and snapshot.metric_text is not None
 
 
-def _explanation(result: KpiResult) -> str:
+EXPLANATION_MARK = "*"
+"""Links the overview value ('45 %*') to its explanation ('* Anteil rote BKAs')."""
+
+
+def _explanation_text(result: KpiResult) -> str:
     metric = result.definition.metric
     return metric.explanation_text if metric is not None else ""
 
 
+def _explanation(result: KpiResult) -> str:
+    text = _explanation_text(result)
+    return f"{EXPLANATION_MARK} {text}" if text else ""
+
+
 def _overview_value(result: KpiResult, snapshot: KpiSnapshot) -> str:
     if _uses_metric(result, snapshot):
-        return result.definition.metric.render(snapshot.metric_text)
-    return _avg_text(result, snapshot.average_text)
+        value = result.definition.metric.render(snapshot.metric_text)
+    else:
+        value = _avg_text(result, snapshot.average_text)
+    # Only mark a value whose explanation is actually on the slide
+    if value and _explanation_text(result):
+        value += EXPLANATION_MARK
+    return value
 
 
 def _commodity_metric_value(result: KpiResult, snapshot: KpiSnapshot, commodity: str) -> str:

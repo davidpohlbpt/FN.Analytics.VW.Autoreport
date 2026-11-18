@@ -270,24 +270,24 @@ class RecipientGroup:
     template_id: int
     brand: str
     """Brand filter value (EK_ORG), used for the data query, file name and headlines"""
-    primary_date: str
-    """Current snapshot as stored by the frontend, e.g. '2025-11-28'"""
-    reference_date: str
-    """Comparison snapshot as stored by the frontend"""
+    report_week: str
+    """Current run as stored by the frontend, e.g. 'V01-D (48/2025)'"""
+    comparison_week: str
+    """Comparison run as stored by the frontend"""
     emails: list[str]
     recipient_ids: list[int]
 
     @property
     def current_period(self) -> ReportPeriod:
-        return ReportPeriod.parse(self.primary_date)
+        return ReportPeriod.parse(self.report_week)
 
     @property
     def reference_period(self) -> ReportPeriod:
-        return ReportPeriod.parse(self.reference_date)
+        return ReportPeriod.parse(self.comparison_week)
 
 
 RECIPIENT_COLUMNS = [
-    "id", "template_id", "email", "brand_id", "primary_date", "reference_date", "send_now", "brand",
+    "id", "template_id", "email", "brand_id", "report_week", "comparison_week", "send_now", "brand",
 ]
 
 
@@ -295,10 +295,10 @@ def read_recipients(template_id: int, *, only_send_now: bool = False) -> pd.Data
     """Recipient rows of a template joined with their active brand.
 
     Adds a ``brand`` column holding the brand's ``filter_value``. Rows whose brand is
-    unknown or inactive are dropped with a warning. The table has no ``is_active``
-    column any more; ``send_now`` is the only trigger.
+    unknown or inactive and soft-deleted rows (``IsDeleted``) are dropped. ``send_now`` is
+    the only trigger.
     """
-    columns, values = ["template_id"], [template_id]
+    columns, values = ["template_id", "IsDeleted"], [template_id, False]
     if only_send_now:
         columns.append("send_now")
         values.append(True)
@@ -321,10 +321,8 @@ def read_recipients(template_id: int, *, only_send_now: bool = False) -> pd.Data
 
 
 def period_of(row: dict, column: str) -> ReportPeriod:
-    """Snapshot date of a recipient row -> ReportPeriod. Mandatory, not validated.
-
-    The frontend guarantees the values exist in the data; the KPI source resolves them
-    (and reports a clear error if a snapshot is missing).
+    """Week of a recipient row -> ReportPeriod. Mandatory; the format is checked here,
+    the existence of the run by the KPI source (with a clear error if it is missing).
     """
     value = _str_or_none(row.get(column))
     if not value:
@@ -333,8 +331,8 @@ def period_of(row: dict, column: str) -> ReportPeriod:
 
 
 def reference_period_of(row: dict) -> ReportPeriod:
-    """Backwards compatible name for the comparison date of a recipient row."""
-    return period_of(row, "reference_date")
+    """Backwards compatible name for the comparison week of a recipient row."""
+    return period_of(row, "comparison_week")
 
 
 def group_recipients(recipients: pd.DataFrame, template_id: int) -> list[RecipientGroup]:
@@ -351,20 +349,20 @@ def group_recipients(recipients: pd.DataFrame, template_id: int) -> list[Recipie
             logging.warning(f"Recipient {row.get('id')} skipped: missing email or brand.")
             continue
         try:
-            primary = period_of(row, "primary_date")
-            reference = period_of(row, "reference_date")
+            primary = period_of(row, "report_week")
+            reference = period_of(row, "comparison_week")
         except ValueError as exc:
             logging.warning(f"Recipient {row.get('id')} skipped: {exc}")
             continue
         if primary == reference:
-            logging.warning(f"Recipient {row.get('id')} skipped: primary_date and reference_date are identical ({primary}).")
+            logging.warning(f"Recipient {row.get('id')} skipped: report_week and comparison_week are identical ({primary}).")
             continue
         groups.append(
             RecipientGroup(
                 template_id=template_id,
                 brand=brand,
-                primary_date=str(primary),
-                reference_date=str(reference),
+                report_week=str(primary),
+                comparison_week=str(reference),
                 emails=[email],
                 recipient_ids=[int(row["id"])],
             )

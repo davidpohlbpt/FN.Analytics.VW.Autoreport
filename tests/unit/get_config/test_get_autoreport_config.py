@@ -113,16 +113,17 @@ def test_recipient_grouping(seed_control_tables):  # noqa: F811
 
     recipients = read_recipients(TEMPLATE_ID)
     assert 7 not in set(recipients["id"])  # inactive brand dropped
+    assert 8 not in set(recipients["id"])  # soft-deleted row dropped
     assert 5 not in set(recipients["id"]) or not recipients[recipients["id"] == 5].empty
 
     groups = group_recipients(recipients, TEMPLATE_ID)
     # one deck per row: two Audi rows with identical dates stay two decks
-    assert [(g.brand, g.primary_date, g.reference_date, g.emails, g.recipient_ids) for g in groups] == [
+    assert [(g.brand, g.report_week, g.comparison_week, g.emails, g.recipient_ids) for g in groups] == [
         ("Audi", "2025-11-28", "2025-11-18", ["a@x.de"], [1]),
         ("Audi", "2025-11-28", "2025-11-18", ["b@x.de"], [2]),
         ("Seat", "2025-11-11", "2025-09-24", ["c@x.de"], [3]),
         ("Seat", "2025-10-28", "2025-08-29", ["d@x.de"], [4]),
-        ("Audi", "2025-11-18", "2025-11-11", ["A@x.de"], [6]),
+        ("Audi", "V01-C (47/2025)", "V01-B (46/2025)", ["A@x.de"], [6]),
     ]
 
     adhoc = group_recipients(read_recipients(TEMPLATE_ID, only_send_now=True), TEMPLATE_ID)
@@ -136,8 +137,8 @@ def test_recipient_rows_are_not_merged():
     """Two identical rows stay two decks; each keeps its own recipient id."""
     rows = pd.DataFrame(
         [
-            {"id": 1, "email": "a@x.de", "brand": "Audi", "primary_date": "2025-11-28", "reference_date": "2025-11-18"},
-            {"id": 2, "email": "A@X.de", "brand": "Audi", "primary_date": "2025-11-28", "reference_date": "2025-11-18"},
+            {"id": 1, "email": "a@x.de", "brand": "Audi", "report_week": "2025-11-28", "comparison_week": "2025-11-18"},
+            {"id": 2, "email": "A@X.de", "brand": "Audi", "report_week": "2025-11-28", "comparison_week": "2025-11-18"},
         ]
     )
     assert [(g.recipient_ids, g.emails) for g in group_recipients(rows, TEMPLATE_ID)] == [([1], ["a@x.de"]), ([2], ["A@X.de"])]
@@ -146,25 +147,29 @@ def test_recipient_rows_are_not_merged():
 def test_recipient_rows_with_bad_dates_are_skipped(caplog):
     rows = pd.DataFrame(
         [
-            {"id": 1, "email": "a@x.de", "brand": "Audi", "primary_date": None, "reference_date": "2025-11-18"},
-            {"id": 2, "email": "b@x.de", "brand": "Audi", "primary_date": "uuid", "reference_date": "2025-11-18"},
-            {"id": 3, "email": "c@x.de", "brand": "Audi", "primary_date": "2025-11-18", "reference_date": "2025-11-18"},
-            {"id": 4, "email": "d@x.de", "brand": "Audi", "primary_date": "2025-11-28", "reference_date": "2025-11-18"},
+            {"id": 1, "email": "a@x.de", "brand": "Audi", "report_week": None, "comparison_week": "2025-11-18"},
+            {"id": 2, "email": "b@x.de", "brand": "Audi", "report_week": "uuid", "comparison_week": "2025-11-18"},
+            {"id": 3, "email": "c@x.de", "brand": "Audi", "report_week": "2025-11-18", "comparison_week": "2025-11-18"},
+            {"id": 4, "email": "d@x.de", "brand": "Audi", "report_week": "2025-11-28", "comparison_week": "2025-11-18"},
         ]
     )
     groups = group_recipients(rows, TEMPLATE_ID)
     assert [g.recipient_ids for g in groups] == [[4]]  # missing, unparsable and identical dates skipped
-    assert "primary_date is mandatory" in caplog.text
+    assert "report_week is mandatory" in caplog.text
     assert "identical" in caplog.text
 
 
 def test_period_of_passes_the_frontend_string_through():
     # no validation against the available snapshots: the KPI source reports a missing one
-    assert str(period_of({"primary_date": "2025-11-28"}, "primary_date")) == "2025-11-28"
-    assert str(period_of({"reference_date": "2026-KW37"}, "reference_date")) == "2026-KW37"
-    assert reference_period_of({"reference_date": "2025-10-28"}) == ReportPeriod.parse("2025-10-28")
+    assert str(period_of({"report_week": "2025-11-28"}, "report_week")) == "2025-11-28"
+    assert str(period_of({"comparison_week": "2026-KW37"}, "comparison_week")) == "2026-KW37"
+    assert reference_period_of({"comparison_week": "2025-10-28"}) == ReportPeriod.parse("2025-10-28")
+    # the frontend dropdown format 'LAUFKENNUNG (LAUF_KW)'
+    run = period_of({"report_week": " V01-B ( 46/2025 ) "}, "report_week")
+    assert str(run) == "V01-B (46/2025)" and run.run == ("V01-B", "46/2025") and run.display == "KW46/2025"
+    assert ReportPeriod.parse("V03-F (5/2025)").display == "KW05/2025"
 
     with pytest.raises(ValueError, match="mandatory"):
-        period_of({"primary_date": "  "}, "primary_date")
+        period_of({"report_week": "  "}, "report_week")
     with pytest.raises(ValueError, match="Unsupported period"):
-        period_of({"primary_date": "last week"}, "primary_date")
+        period_of({"report_week": "last week"}, "report_week")
