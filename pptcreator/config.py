@@ -26,6 +26,11 @@ class CreatorSettings(BaseSettings):
     ``all``. Empty -> ``default_template_id``, else all active templates. A
     ``template_id`` / ``template_ids`` in the event takes precedence."""
 
+    state_machine_arn: str | None = None
+    """STATE_MACHINE_ARN: when set, the plan Lambda starts this Step Function (render ->
+    send -> record) itself, and only when there is something to send. Empty -> plan only
+    returns its output (the Step Function calls plan as its first state)."""
+
     # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"
     """Container (folder) in pycore storage holding the template and the outputs."""

@@ -1,27 +1,17 @@
-"""Lambda 1: read the recipient table and hand one work item per deck to the render Lambda.
+﻿"""Lambda 1: find the decks to send and start the Step Function for them.
 
-in:  {}  (all optional)
-     {"trigger": "adhoc" | "scheduled",               default adhoc: only send_now = 1
-      "template_ids": [1, 3] | "template_id": 1,     else PLAN_TEMPLATE_IDS / all active
-      "recipient_ids": [7, 8]}                        only these rows
-out: {"has_requests": true,
-      "count": 1,
+Called every few minutes by EventBridge (input ``{}``). Reads the recipient rows with
+``send_now = 1``; if there are any and STATE_MACHINE_ARN is set, it starts that Step
+Function (render -> send -> record) with the output below as its input.
+
+in:  {} or {"template_id": 1 | "template_ids": [1, 3], "recipient_ids": [7]}
+out: {"has_requests", "count", "errors": [{"template_id", "error"}],
       "requests": [{"template_id", "brand", "current_period", "reference_period",
-                    "recipients": ["a@x.de"], "recipient_ids": [3]}],
-      "errors": [{"template_id", "error"}]}           templates that could not be planned
-     "has_requests" is false when nothing is to be sent: a Step Functions Choice state
-     can end the execution there. Each request is the input of the render Lambda, which
-     reads the template and KPI mappings itself and passes recipients on to the send step.
-     recipient_ids identify the row for the run log and for clearing send_now (record).
+                    "recipients", "recipient_ids"}],
+      "execution_arn"}                                 only when a Step Function was started
 
-``adhoc`` picks the recipient rows with ``send_now = 1``; that flag is set and cleared by
-the frontend and by the record step, never here. Every request is one recipient row:
-the two runs come from ``report_week`` / ``comparison_week`` (e.g. 'V01-B (46/2025)')
-and are resolved to snapshots by the KPI source.
-
-Side effects: one run-log row per deck with status 'processing' (the claim that stops
-the 5-10 minute poller from sending a row twice), written only after the payload is
-known to fit into the Step Functions state limit.
+Every planned row gets a 'processing' claim in T_Control_Autoreport_Runs, so the next
+poll does not send it again while it is still running; the record step clears send_now.
 """
 
 from __future__ import annotations
@@ -40,118 +30,90 @@ from pptcreator.creator.get_config.get_autoreport_config import (  # noqa: E402
 from pptcreator.creator.graph_steer_creation_process import plan_decks  # noqa: E402
 from pptcreator.utils import run_log  # noqa: E402
 
-TRIGGERS = ("scheduled", "adhoc")
-
 OUTPUT_FIELDS = ("template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids")
-"""Per deck in the output. recipient_ids identifies the row for the run log and send_now."""
 
-# Step Functions limit for a state's input/output is 256 KiB; keep room for the wrapper.
+# Step Functions limit for an execution input is 256 KiB; keep room for the wrapper.
 MAX_PAYLOAD_BYTES = 240 * 1024
 
 
-class PlanFailed(RuntimeError):
-    """No template could be planned; raised so that Step Functions marks the run failed."""
+class PlanFailed(ValueError):
+    """Nothing could be planned or handed over; the invocation fails."""
 
 
 def handler(event, context):
     event = normalise_event(event)
     log_start(context, event)
-
-    trigger = event.get("trigger") or event.get("mode") or "adhoc"
-    if trigger not in TRIGGERS:
-        raise ValueError(f"trigger must be one of {TRIGGERS}, got {trigger!r}.")
+    trigger = event.get("trigger") or "adhoc"
     template_ids = resolve_template_ids(event)
-    if not template_ids:
-        raise PlanFailed("No template to plan: none configured and none active.")
-
     run_id = event.get("run_id") or str(uuid.uuid4())
 
-    requests, items, errors = [], [], []
+    requests, errors = [], []
     for template_id in template_ids:
         try:
             template = get_template_config(template_id)
-            planned = plan_decks(trigger=trigger, template=template, run_id=run_id)
-        except Exception as exc:
-            # One broken template must not block the reports of the others
+            requests += plan_decks(trigger=trigger, template=template, run_id=run_id)
+        except Exception as exc:  # one broken template must not block the others
             logging.exception(f"Planning template {template_id} failed: {exc}")
             errors.append({"template_id": template_id, "error": f"{type(exc).__name__}: {exc}"})
-            continue
-        requests.extend(planned)
-        items.extend(_output_item(r) for r in planned)
-
     if len(errors) == len(template_ids):
         raise PlanFailed(f"All templates failed: {errors}")
 
     if event.get("recipient_ids"):
         wanted = {int(i) for i in event["recipient_ids"]}
         requests = [r for r in requests if r.recipient_id in wanted]
-        items = [i for i in items if i.get("recipient_ids") and i["recipient_ids"][0] in wanted]
 
-    # A row that is still being processed by an earlier run is left alone: retrying it
-    # automatically would send the same deck again on every poll.
+    # Rows still running from an earlier poll are left alone, otherwise they are sent twice
     claimed = run_log.open_recipient_ids([r.recipient_id for r in requests])
-    if claimed:
-        logging.warning(f"Skipping {len(claimed)} recipient row(s) with an open claim: {sorted(claimed)}")
-    selected = [r for r in requests if r.recipient_id not in claimed]
-    items = [i for i in items if i.get("recipient_ids") and i["recipient_ids"][0] not in claimed]
+    requests = [r for r in requests if r.recipient_id not in claimed]
 
-    result = {
-        "has_requests": bool(items),
-        "count": len(items),
-        "requests": items,
-        "errors": errors,
-    }
+    items = [{key: r.to_event()[key] for key in OUTPUT_FIELDS} for r in requests]
+    result = {"has_requests": bool(items), "count": len(items), "requests": items, "errors": errors}
     _check_payload_size(result)
-
-    run_log.log_processing(selected)
+    run_log.log_processing(requests)
 
     for item in items:
         logging.info(
             f"Planned: recipient {item['recipient_ids']} {item['brand']} "
             f"{item['current_period']} vs. {item['reference_period']} -> {item['recipients']}"
         )
-    logging.info(
-        f"Run {run_id}: planned {len(items)} deck(s) for {trigger} from template(s) {template_ids}; "
-        f"skipped {len(claimed)} claimed row(s)."
-    )
+    logging.info(f"Run {run_id}: {len(items)} deck(s) to send, {len(claimed)} still running {sorted(claimed)}.")
+
+    if items and settings.state_machine_arn:
+        result["execution_arn"] = _start_execution(run_id, result, requests)
     return result
 
 
-def _output_item(request) -> dict:
-    """The fields the next steps read: render (deck) and record (recipient_ids)."""
-    event = request.to_event()
-    return {key: event[key] for key in OUTPUT_FIELDS}
+def _start_execution(run_id: str, result: dict, requests: list) -> str:
+    """Start the Step Function. On failure the claims are closed as 'failed' (send_now
+    stays set), so the next poll retries these rows."""
+    from pptcreator.infra.aws_clients import stepfunctions_client
+
+    try:
+        arn = stepfunctions_client().start_execution(
+            stateMachineArn=settings.state_machine_arn, name=run_id, input=json.dumps(result)
+        )["executionArn"]
+    except Exception as exc:
+        for r in requests:
+            run_log.update_status(
+                r.run_id, r.brand, str(r.reference_period), status="failed",
+                recipient_id=r.recipient_id, error=f"Step Function start failed: {exc}",
+            )
+        raise PlanFailed(f"Could not start {settings.state_machine_arn}: {exc}") from exc
+    logging.info(f"Started Step Function execution {arn}.")
+    return arn
 
 
 def resolve_template_ids(event: dict) -> list[int]:
-    """Event ``template_ids``/``template_id`` > PLAN_TEMPLATE_IDS > DEFAULT_TEMPLATE_ID > all active."""
-    for raw in (
-        event.get("template_ids"),
-        event.get("template_id"),
-        settings.plan_template_ids,
-        settings.default_template_id,
-    ):
-        if raw is None or raw == [] or (isinstance(raw, str) and not raw.strip()):
-            continue
-        if isinstance(raw, str) and raw.strip().lower() == "all":
-            return list_active_template_ids()
-        parts = raw.replace(";", ",").split(",") if isinstance(raw, str) else raw
-        if not isinstance(parts, list):
-            parts = [parts]
-        ids: list[int] = []
-        for part in parts:
-            try:
-                template_id = int(str(part).strip())
-            except ValueError as exc:
-                raise ValueError(f"Invalid template id {part!r} in {raw!r}.") from exc
-            if template_id not in ids:
-                ids.append(template_id)
-        return ids
-    return list_active_template_ids()
+    """Event template_ids/template_id > PLAN_TEMPLATE_IDS > DEFAULT_TEMPLATE_ID > all active."""
+    raw = event.get("template_ids") or event.get("template_id") or settings.plan_template_ids or settings.default_template_id
+    if raw is None or str(raw).strip().lower() == "all":
+        return list_active_template_ids()
+    parts = raw if isinstance(raw, list) else str(raw).replace(";", ",").split(",")
+    return list(dict.fromkeys(int(str(p).strip()) for p in parts if str(p).strip()))
 
 
 def _check_payload_size(result: dict) -> None:
-    size = len(json.dumps(result, default=str).encode("utf-8"))
+    size = len(json.dumps(result).encode("utf-8"))
     if size > MAX_PAYLOAD_BYTES:
         raise PlanFailed(
             f"Plan output is {size} bytes for {result['count']} deck(s), above the Step Functions "

@@ -8,6 +8,7 @@ import datetime as dt
 import json
 from pathlib import Path
 
+import boto3
 import pandas as pd
 import pytest
 import sqlalchemy as sa
@@ -31,7 +32,7 @@ from pptcreator.models.models import (
 )
 from pptcreator.utils.read_data import read_data
 from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables  # noqa: F401
-from tests.unit.infra.conftest import BUCKET, aws  # noqa: F401
+from tests.unit.infra.conftest import BUCKET, REGION, aws  # noqa: F401
 
 VW_PKW_ID = 42
 
@@ -124,9 +125,36 @@ def test_plan_default_trigger_is_adhoc(stack):
     assert out["count"] == 2  # only the two send_now rows
 
 
-def test_plan_rejects_bad_trigger(stack):
-    with pytest.raises(ValueError, match="trigger must be"):
-        lambda_handler.plan_handler({"trigger": "manual"}, None)
+def test_plan_starts_the_step_function_only_when_there_is_something_to_send(stack, monkeypatch):
+    sfn = boto3.client("stepfunctions", region_name=REGION)
+    arn = sfn.create_state_machine(
+        name="vw-autoreport-test", definition=json.dumps({"StartAt": "X", "States": {"X": {"Type": "Succeed"}}}),
+        roleArn="arn:aws:iam::123456789012:role/sfn",
+    )["stateMachineArn"]
+    monkeypatch.setattr(settings, "state_machine_arn", arn)
+
+    out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
+
+    executions = sfn.list_executions(stateMachineArn=arn)["executions"]
+    assert [e["executionArn"] for e in executions] == [out["execution_arn"]]
+    started_with = json.loads(sfn.describe_execution(executionArn=out["execution_arn"])["input"])
+    assert started_with["count"] == 2 and started_with["requests"] == out["requests"]
+
+    # next poll: rows are claimed -> nothing to send, no second execution
+    again = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
+    assert again["has_requests"] is False and "execution_arn" not in again
+    assert len(sfn.list_executions(stateMachineArn=arn)["executions"]) == 1
+
+
+def test_failed_step_function_start_releases_the_claims(stack, monkeypatch):
+    monkeypatch.setattr(settings, "state_machine_arn", f"arn:aws:states:{REGION}:123456789012:stateMachine:missing")
+
+    with pytest.raises(lambda_handler.PlanFailed, match="Could not start"):
+        lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
+
+    assert set(_runs()["status"]) == {"failed"}  # claims closed, send_now still set
+    monkeypatch.setattr(settings, "state_machine_arn", None)
+    assert lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)["count"] == 2  # next poll retries
 
 
 def test_plan_template_ids_from_env_and_partial_failure(stack, monkeypatch):
@@ -216,7 +244,8 @@ def test_render_handler_end_to_end(stack):
     for slide in (first, prs.slides[1]):
         texts = [s.text_frame.text for s in slide.shapes if s.has_text_frame]
         # stub source has no LAUFKENNUNG: {datenquelle_run} falls back to the week label
-        assert "BKM IDM, Filterung auf Einkaufsorganisation Audi, alle BKAs, KW45" in texts
+        assert any("Filterung auf Einkaufsorganisation Audi, alle BKAs, KW45" in t for t in texts)
+        assert not any("{datenquelle_run}" in t or "{brand}" in t for t in texts)
     # Audi has no footnote row -> the template's {footnote} shape is not copied at all
     for slide in prs.slides:
         texts = [s.text_frame.text for s in slide.shapes if s.has_text_frame]

@@ -125,6 +125,7 @@ Key switches:
 | `S3_OUTPUT_BUCKET` | upload decks to `s3://<S3_OUTPUT_BUCKET>/<S3_OUTPUT_PREFIX>/`, overriding `target_location` of the template row |
 | `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
 | `PLAN_TEMPLATE_IDS` | plan Lambda: templates per run, e.g. `1,3` or `all` (SAM parameter `PlanTemplateIds`) |
+| `STATE_MACHINE_ARN` | plan Lambda: when set, plan starts this Step Function (render → send → record) itself, only if rows with `send_now = 1` were planned; the execution input is the plan output. Needs `states:StartExecution`. Empty → plan only returns its output |
 | `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
 | `MAIL_ENABLED`, `SES_SENDER`, `SES_RECIPIENTS_MODE`, `SES_MAX_ATTACHMENT_MB` | e-mail; read by the send package (`functions/send/sender/config.py`) straight from the environment |
 | `KPI_SOURCE_OVERRIDE` (`stub`/`frontend`/`backend`) | force one source for all KPIs (testing) |
