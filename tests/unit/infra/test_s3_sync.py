@@ -1,6 +1,8 @@
 import pytest
 
 from pptcreator.config import settings
+from pptcreator.creator.get_config.get_autoreport_config import StorageLocation
+from pptcreator.creator.graph_steer_creation_process import _fetch_template
 from pptcreator.infra import s3_sync
 from tests.unit.infra.conftest import BUCKET
 
@@ -19,6 +21,26 @@ def test_download_template_uses_cached_copy(aws, easy_test):
     easy_test.storage.write_blob(container_name="cont", blob_name="T.pptx", blob_data=b"LOCAL")
     # Nothing in S3 -> would fail if it tried to download
     assert s3_sync.download_template("cont", "T.pptx") == "T.pptx"
+    assert easy_test.storage.read_blob(container_name="cont", blob_name="T.pptx", decode=False) == b"LOCAL"
+
+
+def test_s3_template_is_refreshed_between_reports(aws, easy_test):
+    location = StorageLocation.parse(f"s3://{BUCKET}/templates/T.pptx", default_container="cont")
+    aws["s3"].put_object(Bucket=BUCKET, Key=location.key, Body=b"FIRST")
+    assert _fetch_template(location, "cont") == "T.pptx"
+
+    aws["s3"].put_object(Bucket=BUCKET, Key=location.key, Body=b"UPDATED")
+    assert _fetch_template(location, "cont") == "T.pptx"
+    assert easy_test.storage.read_blob(container_name="cont", blob_name="T.pptx", decode=False) == b"UPDATED"
+
+
+def test_s3_template_uses_local_copy_when_s3_is_disabled(easy_test, monkeypatch):
+    monkeypatch.setattr(settings, "s3_enabled", False)
+    easy_test.storage.create_container("cont")
+    easy_test.storage.write_blob(container_name="cont", blob_name="T.pptx", blob_data=b"LOCAL")
+    location = StorageLocation.parse(f"s3://{BUCKET}/templates/T.pptx", default_container="cont")
+
+    assert _fetch_template(location, "cont") == "T.pptx"
     assert easy_test.storage.read_blob(container_name="cont", blob_name="T.pptx", decode=False) == b"LOCAL"
 
 

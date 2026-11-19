@@ -227,7 +227,8 @@ def render_deck(
 def _fetch_template(location: StorageLocation, container: str) -> str:
     if location.is_s3:
         return s3_sync.download_template(
-            container, location.file_name, bucket=location.bucket, key=location.key
+            container, location.file_name, bucket=location.bucket, key=location.key,
+            force=settings.s3_enabled,
         )
     # Non-S3 link: the file is expected in pycore storage already (local runs)
     source_container = location.container or container

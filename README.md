@@ -274,3 +274,5 @@ docker push <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
   metric defaults to `alle BKAs`. Script 008 sets `alle BKAs mit roten Wochen` for
   `rote_bka` and `alle BKAs mit UVB Fehlern` for `uvb_fehlercode`, without overwriting
   existing text. This wording does not change the underlying data filters.
+- S3-backed templates are downloaded for each report, so replacing a template in S3
+  also updates subsequent reports in warm Lambda environments.
