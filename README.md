@@ -30,14 +30,13 @@ EventBridge (every 5 min, input {})
 | Lambda | Handler | Input | Output | Side effects |
 |---|---|---|---|---|
 | 1 Plan | `pptcreator.lambdas.plan.handler` | `{}` (optional `template_ids`/`template_id`, `recipient_ids`) | `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids"}], "errors", "execution_arn"}`; one request per recipient row with `send_now = 1`, directly usable as render input | run log rows `processing` (the claim); rows with an open claim are skipped; starts the Step Function when `STATE_MACHINE_ARN` is set and there is something to send |
-| 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written one (`deployment/events/render_request.json`); template and KPI mappings are read from the control tables | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`, `request` incl. `recipients`) | deck in S3; run log `rendered`/`failed`; raises on failure |
+| 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written one (`deployment/events/render_request.json`); template and KPI mappings are read from the control tables | `{"recipient", "recipient_id", "run_id", "brand", "bucket", "s3_key", "file_name", "email_subject"}` | deck in S3; run log `rendered`/`failed`; raises on failure |
 | 3 SendEmail | `lambda_function.lambda_handler` (ZIP, `functions/vw-autoreport-sendemail`) | the render output | `{"statusCode": 200, "body"}` | Graph BCC mail; then `send_now = 0`, run log `sent`, generated report deleted. On send failure: run log `failed`, `send_now` and report kept, raises |
 | all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "adhoc"\|"manual", ...}` | summary per deck | render only, for local runs; no e-mail |
 
-The render output is the event for `vw-autoreport-sendemail`: besides the `RenderResult`
-fields it contains flat `run_id`, `brand`, `current_period`, `reference_period`,
-`recipient` and `recipient_id`. The Step Functions Map handles one recipient per item.
-`tests/unit/test_lambda_handler.py` checks this contract.
+The render output is exactly the event read by `vw-autoreport-sendemail`. The Step
+Functions Map handles one recipient per item. `tests/unit/test_lambda_handler.py` checks
+this contract.
 
 Templates per run: event `template_ids`/`template_id` > `PLAN_TEMPLATE_IDS` >
 `DEFAULT_TEMPLATE_ID` > all active templates. Only the sender of a row gets its deck; the

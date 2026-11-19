@@ -172,7 +172,8 @@ def test_plan_template_ids_all_and_default(stack, monkeypatch):
 
 
 def test_plan_payload_too_large_has_no_side_effects(stack, monkeypatch):
-    monkeypatch.setattr(plan, "MAX_PAYLOAD_BYTES", 100)
+    check_payload_size = plan.check_payload_size
+    monkeypatch.setattr(plan, "check_payload_size", lambda result: check_payload_size(result, max_bytes=100))
     with pytest.raises(lambda_handler.PlanFailed, match="Step Functions"):
         lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     assert _runs().empty  # no claim written when the payload would not fit
@@ -183,8 +184,7 @@ def test_render_accepts_the_plan_output(stack):
     request["kpi_ids"] = ["bka_aktualisierung"]  # keep the test deck small
 
     out = lambda_handler.render_handler(request, None)
-    assert out["status"] == "rendered"
-    assert out["request"]["recipients"] == ["b@x.de"]  # passed on to the send step
+    assert out["recipient"] == "b@x.de"  # passed on to the send step
 
 
 # ------------------------------------------------------------------------------ #
@@ -205,17 +205,15 @@ def test_render_handler_end_to_end(stack):
 
     out = lambda_handler.render_handler(event, None)
 
-    assert out["status"] == "rendered"
     assert out["file_name"] == "VW_KPI_Report_Audi_KW45_vs_KW37.pptx"
     assert out["bucket"] == BUCKET
     assert out["s3_key"] == f"reports/dev/{out['file_name']}"  # target_location from the template table
-    assert out["slides"] == len(KPIS) * 3  # Audi stub: 10 commodities -> 2 detail slides per KPI
-    assert out["size_bytes"] > 1_000_000
     assert out["email_subject"] == "VW KPI Report Audi: KW45 vs. KW37"
-    assert out["request"]["brand"] == "Audi"
+    assert out["brand"] == "Audi"
+    assert stack["s3"].head_object(Bucket=out["bucket"], Key=out["s3_key"])["ContentLength"] > 1_000_000
 
     prs = _deck(stack, out["s3_key"])
-    assert len(prs.slides) == out["slides"]
+    assert len(prs.slides) == len(KPIS) * 3  # Audi stub: 10 commodities -> 2 detail slides per KPI
     first = prs.slides[0]
     assert first.shapes.title.text == KPIS[0].title
     texts = [s.text_frame.text for s in first.shapes if s.has_text_frame]
@@ -243,7 +241,7 @@ def test_render_handler_kpi_subset(stack):
         {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37", "kpi_ids": ["bka_aktualisierung"]},
         None,
     )
-    assert out["slides"] == 2  # Seat: 7 commodities -> one detail slide
+    assert len(_deck(stack, out["s3_key"]).slides) == 2  # Seat: 7 commodities -> one detail slide
 
 def test_render_handler_output_bucket_env_overrides_template_row(stack, monkeypatch):
     stack["s3"].create_bucket(Bucket="client-output", CreateBucketConfiguration={"LocationConstraint": "eu-central-1"})
@@ -338,10 +336,9 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
     request["kpi_ids"] = ["bka_aktualisierung"]
 
     out = lambda_handler.render_handler(request, None)
-    assert out["status"] == "rendered"
-    assert out["slides"] == 2  # 7 configured commodities -> one detail slide
 
     prs = _deck(stack, out["s3_key"])
+    assert len(prs.slides) == 2  # 7 configured commodities -> one detail slide
     detail_texts = [s.text_frame.text for s in prs.slides[1].shapes if s.has_text_frame]
     assert "Nur sieben COMs." in detail_texts
     assert sum(1 for s in prs.slides[1].shapes if s.has_chart) == 7
@@ -363,16 +360,17 @@ def test_render_output_contains_the_send_email_event(stack):
 
     out = json.loads(json.dumps(lambda_handler.render_handler(request, None)))  # as passed by Step Functions
 
-    assert out["status"] == "rendered"
+    assert set(out) == {
+        "recipient", "recipient_id", "run_id", "brand", "bucket", "s3_key", "file_name", "email_subject"
+    }
     assert out["bucket"] == BUCKET
     assert out["s3_key"].startswith("reports/dev/") and out["s3_key"].endswith(".pptx")
     assert out["file_name"] == out["s3_key"].rsplit("/", 1)[1]
     assert out["recipient"] == request["recipients"][0]
     assert out["recipient_id"] == request["recipient_ids"][0]
     assert out["brand"] == request["brand"]
-    assert out["current_period"] == request["current_period"]
-    assert out["reference_period"] == request["reference_period"]
     assert out["run_id"] == request["run_id"]
+    assert out["email_subject"]
     stack["s3"].head_object(Bucket=out["bucket"], Key=out["s3_key"])
     # render never changes send_now; the send Lambda resets it after sending
     assert read_data(AutoreportRecipients, ["id"], [request["recipient_ids"][0]])["send_now"].iloc[0]

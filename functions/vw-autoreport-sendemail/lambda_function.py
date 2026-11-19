@@ -17,10 +17,10 @@ def lambda_handler(event, context):
 
     account = os.environ["ACCOUNT"]
     report_bucket = os.environ["REPORT_BUCKET"]
-    report_prefix = os.environ.get("REPORT_PREFIX", "reports").strip("/")
+    report_prefix = os.environ.get("REPORT_PREFIX")
     reportdb_param = os.environ["REPORT_PARAM"]
     time_out = int(os.environ.get("TIME_OUT", "100"))
-    sns_url = os.environ("SNS_URL")
+    sns_url = os.environ.get("SNS_URL")
 
     # Sent by vw-autoreport-render as its Step Functions output: one recipient per call
     recipient = event.get("recipient")
@@ -106,35 +106,32 @@ def get_pyodbc_connection(
     Opens a SQL Server connection using a connection string from AWS SSM.
     """
     try:
-        connection_string = get_parameter(ssm_client, ssm_param_name)
+        response = ssm_client.get_parameter(Name=ssm_param_name, WithDecryption=True)
+        connection_string = response["Parameter"]["Value"]
 
-        values = {}
-        for part in connection_string.split(";"):
-            key, separator, value = part.partition("=")
-            if separator:
-                values[key.replace(" ", "").lower()] = value.strip()
+        cs = connection_string.replace(" ", "")
 
-        def odbc_value(value: str) -> str:
-            return "{" + value.replace("}", "}}") + "}"
+        for char in ["=", ";"]:
+            cs = cs.replace(char, " ")
 
-        driver = os.environ.get("ODBC_DRIVER", "ODBC Driver 17 for SQL Server")
+        cs = cs.split(" ")
+
         parameters = (
-            f"DRIVER={{{driver}}};"
-            f"SERVER={odbc_value(values['server'])};"
-            f"DATABASE={odbc_value(values['initialcatalog'])};"
-            f"UID={odbc_value(values['userid'])};"
-            f"PWD={odbc_value(values['password'])}"
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            "SERVER=" + cs[cs.index("Server") + 1] + ";"
+            "DATABASE=" + cs[cs.index("InitialCatalog") + 1] + ";"
+            "UID=" + cs[cs.index("UserID") + 1] + ";"
+            "PWD=" + cs[cs.index("Password") + 1]
         )
 
         connection = pdb.connect(parameters, timeout=time_out)
-        connection.timeout = time_out
         return connection
 
     except Exception as e:
         print(
             f"ERROR: get_pyodbc_connection failed for SSM parameter: {ssm_param_name}"
         )
-        print(f"ERROR DETAILS: {type(e).__name__}")
+        print(f"ERROR DETAILS: {e}")
         raise
 
 
@@ -145,7 +142,7 @@ def reset_recipientlist(report_conn: object, recipient_id: int) -> None:
     try:
         cursor = report_conn.cursor()
         cursor.execute(
-            f"UPDATE [{schema()}].[T_Control_Autoreport_Recipients] "
+            f"UPDATE [control].[T_Control_Autoreport_Recipients] "
             "SET send_now = 0 WHERE id = ? AND send_now = 1",
             int(recipient_id),
         )
@@ -168,7 +165,7 @@ def finish_run(
     Writes the final status of this report to the run log.
     """
     statement = (
-        f"UPDATE [{schema()}].[T_Control_Autoreport_Runs] "
+        f"UPDATE [control].[T_Control_Autoreport_Runs] "
         "SET status = ?, error = ?, updated_at = SYSUTCDATETIME() "
         "WHERE recipient_id = ?"
     )
@@ -213,13 +210,6 @@ def mark_run_failed(
 def delete_file(bucket: str, s3_key: str) -> None:
     boto3.client("s3").delete_object(Bucket=bucket, Key=s3_key)
     print(f"LOG: Deleted s3://{bucket}/{s3_key}")
-
-
-def schema() -> str:
-    value = os.environ.get("AUTOREPORT_SCHEMA", "control")
-    if not value.isidentifier():
-        raise ValueError(f"Invalid AUTOREPORT_SCHEMA {value!r}")
-    return value
 
 
 def send_alert(sns_url: str, file_name: str) -> None:

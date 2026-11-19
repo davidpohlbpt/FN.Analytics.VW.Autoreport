@@ -57,6 +57,7 @@ class FakeConnection:
 class FakeAws:
     def __init__(self):
         self.deleted = []
+        self.alerts = []
 
     def client(self, service):
         return self
@@ -71,6 +72,10 @@ class FakeAws:
 
     def delete_object(self, Bucket, Key):
         self.deleted.append((Bucket, Key))
+
+    def publish(self, **message):
+        self.alerts.append(message)
+        return {"MessageId": "alert-1"}
 
 
 @pytest.fixture
@@ -101,7 +106,6 @@ def handler(sendemail, monkeypatch):
 
 def _event(**extra):
     return {
-        "status": "rendered",
         "run_id": "run-1",
         "brand": "Audi & <Test>",
         "recipient": "a@example.com",
