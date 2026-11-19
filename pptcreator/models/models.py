@@ -304,7 +304,7 @@ class AutoreportKpiMetrics(DeclarativeBase):
     """Prefix in front of the value, e.g. 'Ø'; NULL/'' -> value only"""
 
     explanation_text: Mapped[str | None] = mapped_column(sa.String(500))
-    """Text of the template's {kpi_explanation} token on the overview slide"""
+    """Text of the template's {kpi_explanation} token on overview and COM slides"""
 
     showed_bkas: Mapped[str | None] = mapped_column(sa.String(200))
     """Data source wording for the template's {showed_Bkas} token"""

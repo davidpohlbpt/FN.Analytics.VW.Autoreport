@@ -3,7 +3,7 @@
 One row per KPI in ``T_Control_Autoreport_KpiMetrics`` describes the value in structured
 form (never as SQL): which columns of ``T_RESULT_Leitstand_Overview`` are summed for the
 numerator and the denominator, how the result is formatted, its label and the
-explanation shown on the overview slide (``{kpi_explanation}``).
+explanation shown on overview and COM slides (``{kpi_explanation}``).
 
 A KPI without an (active, valid) row, or a stage without the table, keeps the previous
 behaviour driven by ``T_Control_Autoreport_Mappings.average_label``.

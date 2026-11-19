@@ -12,7 +12,7 @@
 --   numerator_not_null_column   only rows where this column IS NOT NULL count (numerator)
 --   denominator_columns         comma-separated columns, summed per row; NULL = donut total
 --   label                       prefix in front of the value (e.g. 'Ø'); NULL = value only
---   explanation_text            text of the template's {kpi_explanation} token (overview slide)
+--   explanation_text            text of the template's {kpi_explanation} token (overview + COM slides)
 --
 -- Formats: percent '45 %' (whole number), ratio '120 / 30', count '1.234'.
 -- Denominator 0 / no data: '0 %' resp. '0 / 0'. No SQL is ever stored here: column names
