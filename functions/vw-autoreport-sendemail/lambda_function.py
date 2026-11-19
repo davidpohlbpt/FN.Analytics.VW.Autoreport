@@ -15,10 +15,10 @@ from settings import settings
 def lambda_handler(event, context):
     ssm_client = boto3.client("ssm")
 
-    account = os.environ["ACCOUNT"]
-    report_bucket = os.environ["REPORT_BUCKET"]
-    report_prefix = os.environ.get("REPORT_PREFIX")
-    reportdb_param = os.environ["REPORT_PARAM"]
+    account = os.environ.get("ACCOUNT")
+    report_bucket = os.environ.get("REPORT_BUCKET")
+    # report_prefix = os.environ.get("REPORT_PREFIX")
+    reportdb_param = os.environ.get("REPORT_PARAM")
     time_out = int(os.environ.get("TIME_OUT", "100"))
     sns_url = os.environ.get("SNS_URL")
 
