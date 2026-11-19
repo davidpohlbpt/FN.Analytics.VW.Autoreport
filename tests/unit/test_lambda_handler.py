@@ -19,7 +19,6 @@ from pptcreator import lambda_handler
 from pptcreator.config import settings
 from pptcreator.creator.graph_steer_creation_process import current_calendar_week
 from pptcreator.kpi.registry import KPIS
-from pptcreator.lambdas import plan
 from pptcreator.models.models import (
     AutoreportBrandCommodities,
     AutoreportBrandFeatures,
@@ -40,10 +39,16 @@ TEMPLATE_KEY = "templates/VW_Template_Overview.pptx"
 
 
 @pytest.fixture
-def stack(aws, seed_control_tables, easy_test):  # noqa: F811
+def stack(aws, seed_control_tables, easy_test, monkeypatch):  # noqa: F811
     aws["s3"].put_object(Bucket=BUCKET, Key=TEMPLATE_KEY, Body=TEMPLATE.read_bytes())
     seed_control_tables(f"s3://{BUCKET}/{TEMPLATE_KEY}", target_location=f"s3://{BUCKET}/reports/dev")
-    return aws
+    sfn = boto3.client("stepfunctions", region_name=REGION)
+    arn = sfn.create_state_machine(
+        name="vw-autoreport-test", definition=json.dumps({"StartAt": "X", "States": {"X": {"Type": "Succeed"}}}),
+        roleArn="arn:aws:iam::123456789012:role/sfn",
+    )["stateMachineArn"]
+    monkeypatch.setattr(settings, "state_machine_arn", arn)
+    return {**aws, "sfn": sfn, "state_machine_arn": arn}
 
 
 def _deck(stack, key: str) -> Presentation:
@@ -69,8 +74,8 @@ def _set_send_now(*recipient_ids: int) -> None:
 # ------------------------------------------------------------------------------ #
 
 
-def test_plan_adhoc_picks_send_now_rows(stack):
-    out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
+def test_plan_picks_send_now_rows_of_active_templates(stack):
+    out = lambda_handler.plan_handler({}, None)
 
     assert out["count"] == 2  # rows 2 (Audi) and 4 (Seat) have send_now = 1
     assert out["has_requests"] is True
@@ -84,7 +89,7 @@ def test_plan_adhoc_picks_send_now_rows(stack):
         "current_period": "2025-11-28", "reference_period": "2025-11-18",
         "recipients": ["b@x.de"], "recipient_ids": [2], "run_id": run_id,
     }
-    assert set(out) == {"has_requests", "count", "requests", "errors"}
+    assert set(out) == {"has_requests", "count", "requests", "execution_arn"}
 
     # plan claims the rows but does not touch send_now; the send Lambda resets it
     runs = _runs()
@@ -94,93 +99,51 @@ def test_plan_adhoc_picks_send_now_rows(stack):
     assert read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
 
 
-def test_plan_skips_rows_with_an_open_claim(stack):
-    first = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    assert first["count"] == 2
+def test_plan_starts_one_execution_and_skips_open_claims(stack):
+    sfn, arn = stack["sfn"], stack["state_machine_arn"]
+
+    first = lambda_handler.plan_handler({}, None)
+
+    executions = sfn.list_executions(stateMachineArn=arn)["executions"]
+    assert [e["executionArn"] for e in executions] == [first["execution_arn"]]
+    started_with = json.loads(sfn.describe_execution(executionArn=first["execution_arn"])["input"])
+    assert started_with == {key: first[key] for key in ("has_requests", "count", "requests")}
 
     # the poller runs again before the first run finished: those rows must not be sent twice
-    second = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    assert second["count"] == 0 and second["requests"] == []
-    assert second["has_requests"] is False  # Step Functions Choice: nothing to render
+    second = lambda_handler.plan_handler({}, None)
+    assert second == {"has_requests": False, "count": 0, "requests": []}
+    assert len(sfn.list_executions(stateMachineArn=arn)["executions"]) == 1
     assert len(_runs()) == 2
 
     # once the send Lambda wrote a final status, the row is free again
     for r in first["requests"]:
         run_log.update_status(None, r["brand"], r["reference_period"], status="failed", recipient_id=r["recipient_ids"][0])
-    third = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    assert third["count"] == 2
+    assert lambda_handler.plan_handler({}, None)["count"] == 2
 
 
-def test_plan_recipient_id_filter(stack):
-    out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID, "recipient_ids": [2]}, None)
-    assert out["count"] == 1 and out["requests"][0]["recipients"] == ["b@x.de"]
+def test_plan_without_state_machine_fails_before_claiming(stack, monkeypatch):
+    monkeypatch.setattr(settings, "state_machine_arn", None)
 
+    with pytest.raises(lambda_handler.PlanFailed, match="STATE_MACHINE_ARN"):
+        lambda_handler.plan_handler({}, None)
 
-def test_plan_starts_the_step_function_only_when_there_is_something_to_send(stack, monkeypatch):
-    sfn = boto3.client("stepfunctions", region_name=REGION)
-    arn = sfn.create_state_machine(
-        name="vw-autoreport-test", definition=json.dumps({"StartAt": "X", "States": {"X": {"Type": "Succeed"}}}),
-        roleArn="arn:aws:iam::123456789012:role/sfn",
-    )["stateMachineArn"]
-    monkeypatch.setattr(settings, "state_machine_arn", arn)
-
-    out = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-
-    executions = sfn.list_executions(stateMachineArn=arn)["executions"]
-    assert [e["executionArn"] for e in executions] == [out["execution_arn"]]
-    started_with = json.loads(sfn.describe_execution(executionArn=out["execution_arn"])["input"])
-    assert started_with["count"] == 2 and started_with["requests"] == out["requests"]
-
-    # next poll: rows are claimed -> nothing to send, no second execution
-    again = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    assert again["has_requests"] is False and "execution_arn" not in again
-    assert len(sfn.list_executions(stateMachineArn=arn)["executions"]) == 1
+    assert _runs().empty
 
 
 def test_failed_step_function_start_releases_the_claims(stack, monkeypatch):
     monkeypatch.setattr(settings, "state_machine_arn", f"arn:aws:states:{REGION}:123456789012:stateMachine:missing")
 
     with pytest.raises(lambda_handler.PlanFailed, match="Could not start"):
-        lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
+        lambda_handler.plan_handler({}, None)
 
     assert set(_runs()["status"]) == {"failed"}  # claims closed, send_now still set
-    monkeypatch.setattr(settings, "state_machine_arn", None)
-    assert lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)["count"] == 2  # next poll retries
-
-
-def test_plan_template_ids_from_env_and_partial_failure(stack, monkeypatch):
-    monkeypatch.setattr(settings, "plan_template_ids", f"{TEMPLATE_ID}, 99")
-
-    out = lambda_handler.plan_handler({}, None)
-
-    assert out["count"] == 2  # template 99 does not exist, the others are still planned
-    assert [e["template_id"] for e in out["errors"]] == [99]
-
-    # the event wins over the environment
-    with pytest.raises(lambda_handler.PlanFailed, match="All templates failed"):
-        lambda_handler.plan_handler({"template_ids": [99]}, None)
-
-
-def test_plan_template_ids_all_and_default(stack, monkeypatch):
-    monkeypatch.setattr(settings, "default_template_id", None)
-    monkeypatch.setattr(settings, "plan_template_ids", "all")
-    assert plan.resolve_template_ids({}) == [TEMPLATE_ID]
-    monkeypatch.setattr(settings, "plan_template_ids", None)
-    monkeypatch.setattr(settings, "default_template_id", 7)
-    assert plan.resolve_template_ids({}) == [7]
-    assert plan.resolve_template_ids({"template_id": "3;5;3"}) == [3, 5]
-
-
-def test_plan_payload_too_large_has_no_side_effects(stack, monkeypatch):
-    check_payload_size = plan.check_payload_size
-    monkeypatch.setattr(plan, "check_payload_size", lambda result: check_payload_size(result, max_bytes=100))
-    with pytest.raises(lambda_handler.PlanFailed, match="Step Functions"):
-        lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    assert _runs().empty  # no claim written when the payload would not fit
+    monkeypatch.setattr(settings, "state_machine_arn", stack["state_machine_arn"])
+    assert lambda_handler.plan_handler({}, None)["count"] == 2  # next poll retries
 
 
 def test_render_accepts_the_plan_output(stack):
-    request = lambda_handler.plan_handler({"template_id": TEMPLATE_ID, "recipient_ids": [2]}, None)["requests"][0]
+    planned = lambda_handler.plan_handler({}, None)["requests"]
+    request = next(r for r in planned if r["recipient_ids"] == [2])
     request["kpi_ids"] = ["bka_aktualisierung"]  # keep the test deck small
 
     out = lambda_handler.render_handler(request, None)
@@ -327,11 +290,8 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
         ),
     )
 
-    planned = lambda_handler.plan_handler(
-        {"template_id": TEMPLATE_ID, "recipient_ids": [99]},
-        None,
-    )
-    request = planned["requests"][0]
+    planned = lambda_handler.plan_handler({}, None)
+    request = next(r for r in planned["requests"] if r["recipient_ids"] == [99])
     # kpi_ids is a render-time parameter; keep the test deck small
     request["kpi_ids"] = ["bka_aktualisierung"]
 
@@ -355,7 +315,7 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
 
 
 def test_render_output_contains_the_send_email_event(stack):
-    plan = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
+    plan = lambda_handler.plan_handler({}, None)
     request = plan["requests"][0]
 
     out = json.loads(json.dumps(lambda_handler.render_handler(request, None)))  # as passed by Step Functions

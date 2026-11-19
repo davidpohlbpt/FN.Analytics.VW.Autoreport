@@ -22,14 +22,9 @@ class CreatorSettings(BaseSettings):
     default_template_id: int | None = None
     """Template used when an event does not name one; None -> the only active template."""
 
-    plan_template_ids: str | None = None
-    """Templates planned per run by the plan Lambda: comma-separated ids (``1,3``) or
-    ``all``. Empty -> ``default_template_id``, else all active templates. A
-    ``template_id`` / ``template_ids`` in the event takes precedence."""
-
     state_machine_arn: str | None = None
-    """STATE_MACHINE_ARN: the plan Lambda starts this Step Function (render -> send ->
-    record), only when there is something to send. Empty -> plan only returns its output."""
+    """STATE_MACHINE_ARN: the plan Lambda starts this Step Function (render -> send email)
+    when there is something to send. Required by the plan Lambda."""
 
     # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"

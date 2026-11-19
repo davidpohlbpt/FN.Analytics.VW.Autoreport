@@ -36,12 +36,18 @@ def lambda_handler(event, context):
         if not recipient or recipient_id is None:
             raise ValueError("Event needs exactly one recipient and recipient_id")
 
-        tenant_id = get_parameter(ssm_client, f"/AutoReport/{account}/tenant_id")
-        client_id = get_parameter(ssm_client, f"/AutoReport/{account}/client_id")
-        client_secret = get_parameter(
-            ssm_client, f"/AutoReport/{account}/client_secret"
-        )
-        sender_email = get_parameter(ssm_client, f"/AutoReport/{account}/sender_email")
+        tenant_id = ssm_client.get_parameter(
+            Name=f"/AutoReport/{account}/tenant_id", WithDecryption=True
+        )["Parameter"]["Value"]
+        client_id = ssm_client.get_parameter(
+            Name=f"/AutoReport/{account}/client_id", WithDecryption=True
+        )["Parameter"]["Value"]
+        client_secret = ssm_client.get_parameter(
+            Name=f"/AutoReport/{account}/client_secret", WithDecryption=True
+        )["Parameter"]["Value"]
+        sender_email = ssm_client.get_parameter(
+            Name=f"/AutoReport/{account}/sender_email", WithDecryption=True
+        )["Parameter"]["Value"]
 
         # Retrieve email token
         access_token = get_token(tenant_id, client_id, client_secret)
@@ -91,12 +97,6 @@ def lambda_handler(event, context):
         )
         send_alert(sns_url, str(e))
         raise
-
-
-def get_parameter(ssm_client: object, name: str) -> str:
-    return ssm_client.get_parameter(Name=name, WithDecryption=True)["Parameter"][
-        "Value"
-    ]
 
 
 def get_pyodbc_connection(

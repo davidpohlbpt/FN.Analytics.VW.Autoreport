@@ -29,7 +29,7 @@ EventBridge (every 5 min, input {})
 
 | Lambda | Handler | Input | Output | Side effects |
 |---|---|---|---|---|
-| 1 Plan | `pptcreator.lambdas.plan.handler` | `{}` (optional `template_ids`/`template_id`, `recipient_ids`) | `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids"}], "errors", "execution_arn"}`; one request per recipient row with `send_now = 1`, directly usable as render input | run log rows `processing` (the claim); rows with an open claim are skipped; starts the Step Function when `STATE_MACHINE_ARN` is set and there is something to send |
+| 1 Plan | `pptcreator.lambdas.plan.handler` | `{}` | `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids", "run_id"}], "execution_arn"}`; one request per recipient row with `send_now = 1` in an active template | run log rows `processing` (the claim); rows with an open claim are skipped; starts `STATE_MACHINE_ARN` when there is something to send |
 | 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written one (`deployment/events/render_request.json`); template and KPI mappings are read from the control tables | `{"recipient", "recipient_id", "run_id", "brand", "bucket", "s3_key", "file_name", "email_subject"}` | deck in S3; run log `rendered`/`failed`; raises on failure |
 | 3 SendEmail | `lambda_function.lambda_handler` (ZIP, `functions/vw-autoreport-sendemail`) | the render output | `{"statusCode": 200, "body"}` | Graph BCC mail; then `send_now = 0`, run log `sent`, generated report deleted. On send failure: run log `failed`, `send_now` and report kept, raises |
 | all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "adhoc"\|"manual", ...}` | summary per deck | render only, for local runs; no e-mail |
@@ -38,12 +38,11 @@ The render output is exactly the event read by `vw-autoreport-sendemail`. The St
 Functions Map handles one recipient per item. `tests/unit/test_lambda_handler.py` checks
 this contract.
 
-Templates per run: event `template_ids`/`template_id` > `PLAN_TEMPLATE_IDS` >
-`DEFAULT_TEMPLATE_ID` > all active templates. Only the sender of a row gets its deck; the
-reference and current week come from the recipient row. A template that fails to plan is
-reported in `errors` without blocking the others; if all fail, or the output would exceed
-the Step Functions payload limit, the plan Lambda raises before any side effect.
-`pptcreator.lambda_handler.plan_handler`/`render_handler` remain as aliases.
+Plan reads all active templates from `T_Control_Autoreport_Templates` and the
+`send_now` rows of those templates. Only the sender of a row gets its deck; the reference
+and current week come from the recipient row. If `STATE_MACHINE_ARN` is missing, plan
+raises before writing claims. `pptcreator.lambda_handler.plan_handler`/`render_handler`
+remain as aliases.
 
 Lambda 2 is the core:
 
@@ -121,8 +120,7 @@ Key switches:
 | `SQL_CONN_SSM_PARAM` (+ `SQL_ODBC_DRIVER`, `SQL_ENCRYPT`, `SQL_TRUST_SERVER_CERTIFICATE`) | Lambda: read an ADO-style connection string (`Server=..;Initial Catalog=..;User ID=..;Password=..`) from SSM and set `LOCAL_SQLSERVER_CONN_STR`/`LOCAL_SQLSERVER_DB` |
 | `S3_OUTPUT_BUCKET` | upload decks to `s3://<S3_OUTPUT_BUCKET>/<S3_OUTPUT_PREFIX>/`, overriding `target_location` of the template row |
 | `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
-| `PLAN_TEMPLATE_IDS` | plan Lambda: templates per run, e.g. `1,3` or `all` |
-| `STATE_MACHINE_ARN` | plan Lambda: when set, plan starts this Step Function (render → send email) itself, only if rows with `send_now = 1` were planned; the execution input is the plan output. Needs `states:StartExecution`. Empty → plan only returns its output |
+| `STATE_MACHINE_ARN` | plan Lambda: required; plan starts this Step Function (render → send email) only if rows with `send_now = 1` were planned. Needs `states:StartExecution` |
 | `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
 | `KPI_SOURCE_OVERRIDE` (`stub`/`frontend`/`backend`) | force one source for all KPIs (testing) |
 | `KPI_TABLE`, `DQN_FILTER_*` | backend / frontend source specifics |
