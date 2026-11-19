@@ -344,7 +344,7 @@ class AutoreportRecipients(DeclarativeBase):
     """Comparison run, e.g. 'V01-B (46/2025)', mandatory"""
 
     send_now: Mapped[bool | None] = mapped_column(default=False)
-    """Set by the frontend; cleared by the record step once the mail was sent"""
+    """Set by the frontend; reset by vw-autoreport-sendemail after sending"""
 
     IsDeleted: Mapped[bool] = mapped_column(default=False)
     """Soft delete of the frontend; deleted rows are never planned"""

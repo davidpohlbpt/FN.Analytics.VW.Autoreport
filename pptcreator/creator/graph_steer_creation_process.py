@@ -1,11 +1,11 @@
 """Orchestration of the report creation.
 
 Two processes of the state machine live here, plus the legacy per-template report.
-Sending (Lambda 3) is the separate ``sender`` package in ``functions/send``.
+Sending (Lambda 3) is the separate ZIP function ``functions/vw-autoreport-sendemail``.
 
 * ``plan_decks``     (Lambda 1) recipients table -> list of ReportRequest
 * ``render_deck``    (Lambda 2) ReportRequest -> deck in S3 (the core of the system)
-* ``run_deck``       render + send in one process, for local runs
+* ``run_deck``       render one deck for local runs (no e-mail)
 * ``graph_steer_creation_process`` -- legacy per-template report (control tables +
   DQN Config Center, one slide per filter value)
 """
@@ -98,8 +98,8 @@ def _get_template_ids():
 
 @dataclasses.dataclass
 class RenderResult:
-    """Output of Lambda 2 and input of the send Lambda (functions/send/sender/app.py),
-    which reads it as plain JSON; keep both sides in sync (see the contract test)."""
+    """Output of Lambda 2. The render Lambda adds the flat fields read by
+    functions/vw-autoreport-sendemail/lambda_function.py; keep both sides in sync."""
 
     status: str  # "rendered" | "failed"
     request: dict
@@ -130,7 +130,7 @@ def plan_decks(
 ) -> list[ReportRequest]:
     """One ReportRequest per recipient row with ``send_now = 1``.
 
-    The flag is NOT cleared here; the record step does that once the deck was sent.
+    The flag is NOT cleared here; vw-autoreport-sendemail resets it after sending.
     """
     template = template or get_template_config(template_id)
     run_id = run_id or str(uuid.uuid4())
@@ -254,10 +254,9 @@ class DeckOutcome:
     current_period: str
     reference_period: str
     recipients: list[str]
-    status: str  # "sent" | "rendered" | "failed"
+    status: str  # "rendered" | "failed"
     file_name: str | None = None
     s3_key: str | None = None
-    message_id: str | None = None
     error: str | None = None
 
     def as_dict(self) -> dict:
@@ -270,7 +269,7 @@ def run_deck(
     template: TemplateConfig | None = None,
 ) -> DeckOutcome:
     render = render_deck(request, source, template)
-    outcome = DeckOutcome(
+    return DeckOutcome(
         brand=request.brand,
         current_period=str(request.current_period),
         reference_period=str(request.reference_period),
@@ -280,31 +279,6 @@ def run_deck(
         s3_key=render.s3_key,
         error=render.error,
     )
-    if render.status != "rendered":
-        return outcome
-
-    # Imported here: the render image does not contain the sender package
-    from sender.app import send
-
-    data = None
-    if not render.s3_key:
-        from pycore.easy import storage
-
-        data = storage.read_blob(
-            container_name=render.container or settings.storage_container,
-            blob_name=render.file_name,
-            decode=False,
-        )
-    sent = send(render.as_dict(), data=data)
-    if sent["status"] == "sent":
-        outcome.status = "sent"
-        outcome.message_id = sent["message_id"]
-    elif sent["status"] == "failed":
-        outcome.status = "failed"
-        outcome.error = sent["error"]
-    else:
-        outcome.status = "rendered"
-    return outcome
 
 
 def steer_kpi_deck_process(request: ReportRequest, source: KpiSource | None = None) -> DeckOutcome:
@@ -315,7 +289,7 @@ def steer_kpi_deck_process(request: ReportRequest, source: KpiSource | None = No
 def steer_send_now_decks(
     source: KpiSource | None = None, *, template_id: int | None = None
 ) -> list[DeckOutcome]:
-    """Local all-in-one run: render and send every deck with ``send_now = 1``."""
+    """Local all-in-one run: render every deck with ``send_now = 1``."""
     requests = plan_decks(template_id=template_id)
     if not requests:
         return []

@@ -4,9 +4,11 @@ in:  one request of the plan output: {"template_id", "brand", "current_period",
      "reference_period", "recipients", "recipient_ids"}; optional "kpi_ids",
      "language", "target_file_name". Template and KPI mappings are read from the
      control tables.
-out: RenderResult {"status": "rendered", "bucket", "s3_key", "file_name", ...}; its
-     "request" echoes the input, so the send step gets the recipients from it.
-Raises on failure so that Step Functions retries / catches it.
+out: RenderResult {"status": "rendered", "bucket", "s3_key", "file_name", ...} plus the
+     flat fields read by the next Step Functions state, vw-autoreport-sendemail:
+     "run_id", "brand", "current_period", "reference_period", "recipient",
+     "recipient_id" (one recipient per Map item).
+Raises on failure so that Step Functions catches it.
 """
 
 from __future__ import annotations
@@ -42,4 +44,12 @@ def handler(event, context):
     if result.status != "rendered":
         raise RenderFailed(result.error or "render failed")
     logging.info(f"Rendered {result.file_name} ({result.slides} slides, {result.size_bytes} bytes) -> {result.s3_key}")
-    return result.as_dict()
+    return {
+        **result.as_dict(),
+        "run_id": request.run_id,
+        "brand": request.brand,
+        "current_period": str(request.current_period),
+        "reference_period": str(request.reference_period),
+        "recipient": request.recipients[0] if len(request.recipients) == 1 else None,
+        "recipient_id": request.recipient_id if len(request.recipient_ids) == 1 else None,
+    }

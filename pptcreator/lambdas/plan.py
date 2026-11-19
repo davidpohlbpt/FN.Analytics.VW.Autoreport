@@ -7,11 +7,12 @@ Function (render -> send -> record) with the output below as its input.
 in:  {} or {"template_id": 1 | "template_ids": [1, 3], "recipient_ids": [7]}
 out: {"has_requests", "count", "errors": [{"template_id", "error"}],
       "requests": [{"template_id", "brand", "current_period", "reference_period",
-                    "recipients", "recipient_ids"}],
+                    "recipients", "recipient_ids", "run_id"}],
       "execution_arn"}                                 only when a Step Function was started
 
 Every planned row gets a 'processing' claim in T_Control_Autoreport_Runs, so the next
-poll does not send it again while it is still running; the record step clears send_now.
+poll does not send it again while it is still running; vw-autoreport-sendemail resets
+send_now after sending.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from pptcreator.creator.get_config.get_autoreport_config import (  # noqa: E402
 from pptcreator.creator.graph_steer_creation_process import plan_decks  # noqa: E402
 from pptcreator.utils import run_log  # noqa: E402
 
-OUTPUT_FIELDS = ("template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids")
+OUTPUT_FIELDS = ("template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids", "run_id")
 
 # Step Functions limit for an execution input is 256 KiB; keep room for the wrapper.
 MAX_PAYLOAD_BYTES = 240 * 1024

@@ -1,7 +1,7 @@
-﻿"""End-to-end through the three Lambda handlers and the all-in-one handler.
+"""End-to-end through the plan and render Lambdas and the all-in-one handler.
 
-Control tables in pycore's in-memory SQLite, template in moto S3, decks in moto S3,
-e-mails via moto SES, KPI data from the stub source. Writes decks to tests/result/.
+Control tables in pycore's in-memory SQLite, template in moto S3, decks in moto S3, KPI
+data from the stub source. Writes decks to tests/result/.
 """
 
 import datetime as dt
@@ -14,7 +14,6 @@ import pytest
 import sqlalchemy as sa
 from pptx import Presentation
 from pycore.easy import database
-from sender import app as send_app
 
 from pptcreator import lambda_handler
 from pptcreator.config import settings
@@ -28,6 +27,7 @@ from pptcreator.models.models import (
     AutoreportRecipients,
     AutoreportRuns,
 )
+from pptcreator.utils import run_log
 from pptcreator.utils.read_data import read_data
 from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables  # noqa: F401
 from tests.unit.infra.conftest import BUCKET, REGION, aws  # noqa: F401
@@ -76,17 +76,20 @@ def test_plan_adhoc_picks_send_now_rows(stack):
     assert out["has_requests"] is True
     by_email = {r["recipients"][0]: r for r in out["requests"]}
     assert set(by_email) == {"b@x.de", "d@x.de"}
-    # exactly what render (deck) and record (recipient_ids) read, nothing else
+    # exactly what render and vw-autoreport-sendemail need, nothing else
+    run_id = by_email["b@x.de"]["run_id"]
+    assert run_id and by_email["d@x.de"]["run_id"] == run_id
     assert by_email["b@x.de"] == {
         "template_id": TEMPLATE_ID, "brand": "Audi",
         "current_period": "2025-11-28", "reference_period": "2025-11-18",
-        "recipients": ["b@x.de"], "recipient_ids": [2],
+        "recipients": ["b@x.de"], "recipient_ids": [2], "run_id": run_id,
     }
     assert set(out) == {"has_requests", "count", "requests", "errors"}
 
-    # plan claims the rows but does not touch send_now; the record step clears it
+    # plan claims the rows but does not touch send_now; the send Lambda resets it
     runs = _runs()
     assert len(runs) == 2 and set(runs["status"]) == {"processing"}
+    assert set(runs["run_id"]) == {run_id}
     assert set(runs["recipient_id"]) == {2, 4}
     assert read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
 
@@ -101,11 +104,9 @@ def test_plan_skips_rows_with_an_open_claim(stack):
     assert second["has_requests"] is False  # Step Functions Choice: nothing to render
     assert len(_runs()) == 2
 
-    # once recorded, the row is free again (a deliberate resend by the frontend)
-    lambda_handler.record_handler({"results": [
-        {"status": "failed", "step": "send", "request": r, "error": {"Error": "SendFailed", "Cause": "x"}}
-        for r in first["requests"]
-    ]}, None)
+    # once the send Lambda wrote a final status, the row is free again
+    for r in first["requests"]:
+        run_log.update_status(None, r["brand"], r["reference_period"], status="failed", recipient_id=r["recipient_ids"][0])
     third = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     assert third["count"] == 2
 
@@ -352,125 +353,29 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
 
 
 # ------------------------------------------------------------------------------ #
-# Lambda 3 (separate ZIP package): contract with the render output
+# Step Functions: render output is the vw-autoreport-sendemail event
 # ------------------------------------------------------------------------------ #
 
 
-def _seat_render(**extra):
-    return lambda_handler.render_handler(
-        {"template_id": TEMPLATE_ID, "brand": "Seat", "current_period": "KW45", "reference_period": "KW37",
-         "kpi_ids": ["bka_aktualisierung"], **extra},
-        None,
-    )
-
-
-def test_send_handler_sends_render_output_from_s3(stack):
-    render = _seat_render(recipients=["a@x.de", "b@x.de"])
-
-    out = send_app.handler(json.loads(json.dumps(render)), None)  # as passed by Step Functions
-
-    assert out["status"] == "sent"
-    assert out["message_id"]
-    assert out["recipients"] == ["a@x.de", "b@x.de"]
-    assert stack["ses"].get_send_quota()["SentLast24Hours"] == 2
-
-
-def test_send_handler_recipient_override_and_skip(stack, monkeypatch):
-    render = _seat_render()
-    out = send_app.handler({**render, "recipients": ["x@x.de"]}, None)
-    assert out["status"] == "sent" and out["recipients"] == ["x@x.de"]
-
-    out = send_app.handler(render, None)  # no recipients at all
-    assert out["status"] == "skipped"
-
-    monkeypatch.setenv("MAIL_ENABLED", "false")
-    out = send_app.handler({**render, "recipients": ["x@x.de"]}, None)
-    assert out["status"] == "skipped" and "MAIL_ENABLED" in out["error"]
-
-
-def test_send_handler_raises_when_deck_is_missing(stack):
-    render = _seat_render(recipients=["a@x.de"])
-    stack["s3"].delete_object(Bucket=render["bucket"], Key=render["s3_key"])
-    with pytest.raises(send_app.SendFailed, match="NoSuchKey"):
-        send_app.handler(render, None)
-
-
-def test_send_handler_failed_render_is_skipped():
-    out = send_app.handler(
-        {"status": "failed", "request": {"brand": "Audi"}, "error": "boom", "recipients": ["x@x.de"]}, None
-    )
-    assert out["status"] == "skipped"
-
-
-# ------------------------------------------------------------------------------ #
-# Step Functions round trip: plan -> Map(render -> send) -> record
-# ------------------------------------------------------------------------------ #
-
-
-def test_state_machine_round_trip(stack):
-    _set_send_now(3)  # a third row whose render fails below
-    plan = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    by_row = {r["recipient_ids"][0]: r for r in plan["requests"]}
-
-    decks = [send_app.handler(lambda_handler.render_handler(by_row[i], None), None) for i in (2, 4)]
-    # what the Catch of a failed render deck hands to the record step
-    decks.append({
-        "status": "failed", "step": "render", "request": by_row[3],
-        "error": {"Error": "RenderFailed", "Cause": json.dumps({"errorMessage": "no data"})},
-    })
-
-    assert [d["status"] for d in decks[:2]] == ["sent", "sent"]
-    # render updated its claim, the extra row is still only claimed; send has no DB access
-    assert set(_runs()["status"]) == {"rendered", "processing"}
-
-    out = lambda_handler.record_handler({"results": decks}, None)
-
-    assert out == {"run_id": None, "recorded": 3, "sent": 2, "skipped": 0, "failed": 1, "cleared": 2}
-    runs = _runs().set_index("recipient_id")
-    assert runs.loc[2, "status"] == "sent" and runs.loc[2, "message_id"]
-    assert runs.loc[2, "user_email"] == "b@x.de"
-    assert runs.loc[2, "s3_key"].endswith("VW_KPI_Report_Audi_2025-11-28_vs_2025-11-18.pptx")
-    assert runs.loc[4, "status"] == "sent"
-    assert runs.loc[3, "status"] == "failed"
-    assert "no data" in runs.loc[3, "error"]
-    assert stack["ses"].get_send_quota()["SentLast24Hours"] == 2
-
-    # send_now of the sent rows is gone; nothing else was touched
-    send_now = read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
-    assert not send_now
-    assert not read_data(AutoreportRecipients, ["id"], [4])["send_now"].iloc[0]
-    assert not read_data(AutoreportRecipients, ["id"], [1])["send_now"].iloc[0]  # was already false
-
-
-def test_skip_leaves_send_now_cleared_but_row_not_resent(stack):
+def test_render_output_contains_the_send_email_event(stack):
     plan = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
     request = plan["requests"][0]
 
-    # MAIL_ENABLED=false in the send Lambda -> skipped, still a finished run
-    out = lambda_handler.record_handler({"results": [
-        {"status": "skipped", "request": request, "error": "MAIL_ENABLED is false."}
-    ]}, None)
+    out = json.loads(json.dumps(lambda_handler.render_handler(request, None)))  # as passed by Step Functions
 
-    assert out["sent"] == 0 and out["skipped"] == 1 and out["cleared"] == 1
-    assert _runs().set_index("recipient_id").loc[request["recipient_ids"][0], "status"] == "skipped"
-    assert not read_data(AutoreportRecipients, ["id"], [request["recipient_ids"][0]])["send_now"].iloc[0]
-
-
-def test_record_handler_failure_keeps_send_now(stack):
-    plan = lambda_handler.plan_handler({"template_id": TEMPLATE_ID}, None)
-    by_email = {r["recipients"][0]: r for r in plan["requests"]}
-
-    lambda_handler.record_handler({"results": [
-        {"status": "failed", "step": "send", "request": by_email["d@x.de"],
-         "error": {"Error": "SendFailed", "Cause": json.dumps({"errorMessage": "SES down"})}},
-    ]}, None)
-
-    runs = _runs().set_index("recipient_id")
-    assert runs.loc[4, "status"] == "failed" and runs.loc[4, "error"] == "SendFailed: SES down"
-    assert runs.loc[2, "status"] == "processing"  # not part of this record call
-    # the failed row keeps send_now, so the user sees it was not delivered (no auto retry,
-    # the claim row is closed which is what stops the poller from looping)
-    assert read_data(AutoreportRecipients, ["id"], [4])["send_now"].iloc[0]
+    assert out["status"] == "rendered"
+    assert out["bucket"] == BUCKET
+    assert out["s3_key"].startswith("reports/dev/") and out["s3_key"].endswith(".pptx")
+    assert out["file_name"] == out["s3_key"].rsplit("/", 1)[1]
+    assert out["recipient"] == request["recipients"][0]
+    assert out["recipient_id"] == request["recipient_ids"][0]
+    assert out["brand"] == request["brand"]
+    assert out["current_period"] == request["current_period"]
+    assert out["reference_period"] == request["reference_period"]
+    assert out["run_id"] == request["run_id"]
+    stack["s3"].head_object(Bucket=out["bucket"], Key=out["s3_key"])
+    # render never changes send_now; the send Lambda resets it after sending
+    assert read_data(AutoreportRecipients, ["id"], [request["recipient_ids"][0]])["send_now"].iloc[0]
 
 
 # ------------------------------------------------------------------------------ #
@@ -484,12 +389,12 @@ def test_all_in_one_manual(stack):
          "reference_period": "KW37", "recipients": ["a@example.com"]},
         None,
     )
-    assert summary["sent"] == 1 and summary["results"][0]["s3_key"]
+    assert summary["rendered"] == 1 and summary["results"][0]["s3_key"]
 
 
 def test_all_in_one_adhoc(stack):
     summary = lambda_handler.run({"mode": "adhoc", "template_id": TEMPLATE_ID})
-    assert summary["decks"] == 2 and summary["sent"] == 2  # one deck per send_now row
+    assert summary["decks"] == 2 and summary["rendered"] == 2  # one deck per send_now row
 
 
 def test_all_in_one_errors():

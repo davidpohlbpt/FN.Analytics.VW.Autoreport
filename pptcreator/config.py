@@ -51,7 +51,7 @@ class CreatorSettings(BaseSettings):
     overriding ``target_location`` of the template row."""
 
     # ---------------------------------- AWS ----------------------------------- #
-    # Mail settings (MAIL_ENABLED, SES_*) belong to the send Lambda: functions/send/sender/config.py
+    # E-mail settings belong to the send Lambda: functions/vw-autoreport-sendemail
 
     aws_region: str | None = Field(default=None, validation_alias="AWS_REGION_NAME")
     """Region for boto3 clients. Read from ``AWS_REGION_NAME`` because ``AWS_REGION`` is a

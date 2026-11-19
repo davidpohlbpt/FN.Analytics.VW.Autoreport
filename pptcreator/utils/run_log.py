@@ -18,7 +18,7 @@ import logging
 import sqlalchemy as sa
 from pycore.easy import data_repo, database
 
-from pptcreator.models.models import AutoreportRecipients, AutoreportRuns
+from pptcreator.models.models import AutoreportRuns
 
 OPEN_STATUS = "processing"
 """Rows with this status are claimed; the poller must not pick them up again."""
@@ -107,19 +107,3 @@ def open_recipient_ids(recipient_ids: list[int]) -> set[int]:
     except Exception as exc:
         logging.warning(f"Could not read open claims for {recipient_ids}: {exc}")
         return set()
-
-
-def clear_send_now(recipient_ids: list[int]) -> int:
-    """Reset ``send_now`` for the given recipient rows. Returns the number of rows updated."""
-    if not recipient_ids:
-        return 0
-    table = AutoreportRecipients.__table__
-    stmt = sa.update(table).where(table.c.id.in_(list(recipient_ids))).values(send_now=False)
-    try:
-        with database.engine.begin() as con:
-            count = con.execute(stmt).rowcount
-        logging.info(f"send_now cleared for {count} recipient row(s).")
-        return count
-    except Exception as exc:
-        logging.warning(f"Could not clear send_now for {recipient_ids}: {exc}")
-        return 0
