@@ -1,12 +1,3 @@
-# Lambda container image for the VW Autoreport.
-#
-# Build (from the repository root):
-#   docker build -f deployment/Dockerfile -t vw-autoreport .
-#
-# No network credentials are needed at build time: the internal pycore package is
-# vendored as a wheel in ./vendor and all other dependencies are pinned in
-# requirements-docker.txt (generated from poetry.lock, see README).
-
 FROM public.ecr.aws/lambda/python:3.12
 
 WORKDIR ${LAMBDA_TASK_ROOT}
@@ -45,15 +36,15 @@ ENV CA_BUNDLE_PATH=${LAMBDA_TASK_ROOT}/certs/ca-bundle.pem
 COPY pptcreator ./pptcreator
 RUN chmod -R a+rX ./pptcreator
 
-# pycore reads these at import time; the SAM template can override them.
+# pycore reads these at import time; Lambda environment variables override them.
 ENV APP_NAME=VwAutoreport \
     RESOURCE_TYPE=LOCAL \
     LOCAL_BLOB_DIR=/tmp/autoreport_data \
     APP_DB_NAME=ReportDB
 
-# Default = Lambda 2 (render). The plan/send functions override the command via the
-# Lambda ImageConfig (see deployment/template.yaml):
+# Default = Lambda 2 (render). The plan/record functions override the command in their
+# Lambda image configuration (CMD override):
 #   pptcreator.lambdas.plan.handler
-#   pptcreator.lambdas.send.handler
-#   pptcreator.lambda_handler.handler         (all-in-one)
+#   pptcreator.lambdas.record.handler
+# The send Lambda is not part of this image: it is a ZIP built from functions/send.
 CMD ["pptcreator.lambdas.render.handler"]

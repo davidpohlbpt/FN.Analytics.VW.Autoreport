@@ -16,7 +16,9 @@ from pptcreator.config import settings
 from pptcreator.creator.get_config.get_autoreport_config import TemplateConfig
 from pptcreator.creator.get_config.get_template_config import get_template_config
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSource, ReportPeriod
+from pptcreator.kpi.brand_policy import BrandPolicy, load_brand_policy
 from pptcreator.kpi.build_output_slides import build_output_slides, discover_chart_slots
+from pptcreator.kpi.kpi_metric import attach_metrics, load_kpi_metrics
 from pptcreator.models.enum import Languages
 from pptcreator.utils.get_presentation import get_presentation
 
@@ -110,6 +112,11 @@ class ReportRequest:
     def group_key(self) -> tuple[str, str, str]:
         return (self.brand, str(self.current_period), str(self.reference_period))
 
+    @property
+    def recipient_id(self) -> int | None:
+        """Row of T_Control_Autoreport_Recipients that requested this deck."""
+        return self.recipient_ids[0] if self.recipient_ids else None
+
     def default_file_name(self) -> str:
         return safe_file_name(
             f"VW_KPI_Report_{self.brand}_{self.current_period}_vs_{self.reference_period}"
@@ -132,14 +139,22 @@ def select_kpis(template: TemplateConfig, kpi_ids: list[str] | None) -> list[Kpi
     return [by_id[i] for i in kpi_ids]
 
 
-def fetch_kpi_results(request: ReportRequest, source: KpiSource, kpis: list[KpiDefinition]) -> list[KpiResult]:
+def fetch_kpi_results(
+    request: ReportRequest,
+    source: KpiSource,
+    kpis: list[KpiDefinition],
+    policy: BrandPolicy | None = None,
+) -> list[KpiResult]:
     results = []
     for definition in kpis:
         logging.info(
             f"Fetching {definition.id} ({definition.source}) for {request.brand} "
             f"({request.current_period} vs. {request.reference_period})"
         )
-        results.append(source.fetch(definition, request.brand, request.current_period, request.reference_period))
+        result = source.fetch(definition, request.brand, request.current_period, request.reference_period)
+        if policy is not None and policy.commodities is not None:
+            result = policy.commodities.apply_to_result(result)
+        results.append(result)
     return results
 
 
@@ -182,14 +197,16 @@ def get_kpi_deck_config(
         logging.info(f"Reading template slots from {container}/{template_file}")
         template_slots = discover_chart_slots(get_presentation(config_dict))
 
-        kpis = select_kpis(template, request.kpi_ids)
-        results = fetch_kpi_results(request, source, kpis)
+        brand_policy = load_brand_policy(request.brand)
+        kpis = attach_metrics(select_kpis(template, request.kpi_ids), load_kpi_metrics())
+        results = fetch_kpi_results(request, source, kpis, brand_policy)
         config_dict["output_slides"] = build_output_slides(
             results,
             template_slots=template_slots,
             charts_per_detail_slide=template.commodity_charts_per_slide
             or settings.commodity_charts_per_slide,
             show_data_labels=show_data_labels,
+            brand_policy=brand_policy,
         )
 
         logging.info("Reading template object positions and fonts")

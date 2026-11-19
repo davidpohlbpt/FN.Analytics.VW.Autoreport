@@ -3,7 +3,11 @@ name = "fn-analytics-vw-autoreport"
 version = "0.1.0"
 description = "Automated PowerPoint KPI reporting for VW, running as an AWS Lambda"
 authors = ["Factory Navigator"]
-packages = [{ include = "pptcreator" }]
+packages = [
+    { include = "pptcreator" },
+    # Send Lambda, deployed as its own ZIP; included here for local all-in-one runs
+    { include = "sender", from = "functions/send" },
+]
 
 [tool.poetry.scripts]
 pptcreator = "pptcreator.lambda_handler:cli"
@@ -47,6 +51,7 @@ black = "^26.1.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [".", "functions/send"]
 addopts = "-p no:cacheprovider"
 
 [build-system]

@@ -191,7 +191,8 @@ class AutoreportMappings(DeclarativeBase):
     """JSON {category: 'rgb(r, g, b)'} in category order. None -> frontend colours"""
 
     average_label: Mapped[str | None] = mapped_column(sa.String(20), default="Ø")
-    """Prefix for the average text in headlines; NULL/'' -> KPI has no average"""
+    """Deprecated: fallback only when T_Control_Autoreport_KpiMetrics has no row for the KPI.
+    Prefix for the average text in headlines; NULL/'' -> KPI has no average"""
 
     is_active: Mapped[bool] = mapped_column(default=True)
 
@@ -213,22 +214,116 @@ class AutoreportBrands(DeclarativeBase):
     is_active: Mapped[bool] = mapped_column(default=True)
 
 
-class AutoreportRecipients(DeclarativeBase):
-    """One row per deck a user wants: template + brand + reference week.
+class AutoreportBrandCommodities(DeclarativeBase):
+    """Commodity presentation per brand: which COMs, which labels, which order.
 
-    The same e-mail may appear several times for the same template and brand with
-    different reference weeks; each row yields its own deck (identical ones are merged).
+    A brand without active rows keeps the default behaviour (all COMs the source returns,
+    source labels, source order, COMs with an all-zero distribution skipped). Rows turn the
+    brand into an explicit whitelist: only ``com_source`` values are shown, renamed to
+    ``com_label``, ordered by ``sort_order``, and zero-valued COMs are kept when
+    ``show_if_zero`` is set.
+    """
+
+    __tablename__ = "T_Control_Autoreport_BrandCommodities"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    brand_id: Mapped[int] = mapped_column(
+        sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Brands.id")
+    )
+
+    com_source: Mapped[str] = mapped_column(sa.String(50))
+    """Value in T_RESULT_Leitstand_Overview.COM, e.g. 'BP'"""
+
+    com_label: Mapped[str] = mapped_column(sa.String(50))
+    """Label shown in the chart headline, e.g. 'CB'"""
+
+    sort_order: Mapped[int] = mapped_column(default=0)
+    """Position on the detail slide (ascending)"""
+
+    show_if_zero: Mapped[bool] = mapped_column(default=True)
+    """Keep the chart when the COM has no data or only zeros"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class AutoreportBrandFeatures(DeclarativeBase):
+    """Free-form per-brand switches, so a brand quirk needs no schema change.
+
+    A brand without an active row for a key falls back to the feature's default (off).
+    """
+
+    __tablename__ = "T_Control_Autoreport_BrandFeatures"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    brand_id: Mapped[int] = mapped_column(
+        sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Brands.id")
+    )
+
+    feature_key: Mapped[str] = mapped_column(sa.String(50))
+    """e.g. 'footnote_text'"""
+
+    feature_value: Mapped[str] = mapped_column(sa.String(200))
+    """Text/render value of the feature, e.g. the footnote sentence"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class AutoreportKpiMetrics(DeclarativeBase):
+    """The value under each donut per KPI (same for all brands and templates).
+
+    Structured on purpose (no SQL text): numerator / denominator are sums of columns of
+    T_RESULT_Leitstand_Overview, filtered like the donut. See pptcreator/kpi/kpi_metric.py.
+    A KPI without an active row falls back to Mappings.average_label.
+    """
+
+    __tablename__ = "T_Control_Autoreport_KpiMetrics"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    kpi_key: Mapped[str] = mapped_column(sa.String(100))
+    """Same key as T_Control_Autoreport_Mappings.kpi_key, e.g. 'rote_bka'"""
+
+    metric_type: Mapped[str] = mapped_column(sa.String(20))
+    """'avg_age' | 'percent' | 'ratio' | 'count'"""
+
+    numerator_columns: Mapped[str | None] = mapped_column(sa.String(500))
+    """Comma-separated columns summed per row; NULL -> the donut total"""
+
+    numerator_not_null_column: Mapped[str | None] = mapped_column(sa.String(100))
+    """Only rows where this column IS NOT NULL count towards the numerator"""
+
+    denominator_columns: Mapped[str | None] = mapped_column(sa.String(500))
+    """Comma-separated columns summed per row; NULL -> the donut total"""
+
+    label: Mapped[str | None] = mapped_column(sa.String(50))
+    """Prefix in front of the value, e.g. 'Ø'; NULL/'' -> value only"""
+
+    explanation_text: Mapped[str | None] = mapped_column(sa.String(500))
+    """Text of the template's {kpi_explanation} token on the overview slide"""
+
+    showed_bkas: Mapped[str | None] = mapped_column(sa.String(200))
+    """Data source wording for the template's {showed_Bkas} token"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class AutoreportRecipients(DeclarativeBase):
+    """One row per deck a user wants: template + brand + two Control Center runs.
+
+    The frontend maintains this table; the ``send_now`` flag is the only trigger of a
+    deck. The weeks are the frontend dropdown strings (``V01-B (46/2025)`` =
+    ``LAUFKENNUNG (LAUF_KW)``, see dbo.V_Autoreport_DropdownValues); dates
+    (``YYYY-MM-DD``) and ``2025-KW46`` are accepted as well. They are passed through to
+    the KPI source, which resolves the snapshot.
     """
 
     __tablename__ = "T_Control_Autoreport_Recipients"
-    __table_args__ = (
-        sa.UniqueConstraint(
-            "email", "template_id", "brand_id", "reference_year", "reference_week",
-            name="UQ_Autoreport_Recipients",
-        ),
-        sa.CheckConstraint("reference_week BETWEEN 1 AND 53", name="CK_Autoreport_Recipients_Week"),
-        {"schema": AUTOREPORT_SCHEMA, "extend_existing": True},
-    )
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
@@ -236,24 +331,23 @@ class AutoreportRecipients(DeclarativeBase):
         sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Templates.id")
     )
 
-    email: Mapped[str] = mapped_column(sa.String(500))
+    email: Mapped[str] = mapped_column(sa.String(1000))
 
     brand_id: Mapped[int] = mapped_column(
         sa.ForeignKey(f"{AUTOREPORT_SCHEMA}.T_Control_Autoreport_Brands.id")
     )
 
-    reference_year: Mapped[int]
-    """ISO year of the reference week (mandatory)"""
+    report_week: Mapped[str] = mapped_column(sa.String(50))
+    """Current run, e.g. 'V01-D (48/2025)', mandatory"""
 
-    reference_week: Mapped[int]
-    """ISO week 1-53 of the reference week (mandatory)"""
+    comparison_week: Mapped[str] = mapped_column(sa.String(50))
+    """Comparison run, e.g. 'V01-B (46/2025)', mandatory"""
 
     send_now: Mapped[bool | None] = mapped_column(default=False)
-    """Ad hoc request flag set by the frontend; cleared by the planner when picked up"""
+    """Set by the frontend; cleared by the record step once the mail was sent"""
 
-    is_active: Mapped[bool | None] = mapped_column(default=True)
-
-    last_edited_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)
+    IsDeleted: Mapped[bool] = mapped_column(default=False)
+    """Soft delete of the frontend; deleted rows are never planned"""
 
 
 class AutoreportRuns(DeclarativeBase):
@@ -267,17 +361,24 @@ class AutoreportRuns(DeclarativeBase):
     """UUID shared by all decks of one planner invocation"""
 
     template_id: Mapped[int]
+    user_email: Mapped[str | None] = mapped_column(sa.String(1000))
+    """E-mail of the requesting recipient row"""
+    recipient_id: Mapped[int | None]
+    """Row id in T_Control_Autoreport_Recipients; also the claim that prevents double sends"""
+
     brand: Mapped[str] = mapped_column(sa.String(200))
-    current_period: Mapped[str] = mapped_column(sa.String(50))
-    reference_period: Mapped[str] = mapped_column(sa.String(50))
-    recipients: Mapped[str] = mapped_column(sa.String(4000))
-    """Semicolon separated"""
+    primary_date: Mapped[str | None] = mapped_column(sa.String(30))
+    reference_date: Mapped[str | None] = mapped_column(sa.String(30))
+    current_period: Mapped[str | None] = mapped_column(sa.String(50))
+    """Legacy column, kept for older rows"""
+    reference_period: Mapped[str | None] = mapped_column(sa.String(50))
+    """Legacy column, kept for older rows"""
 
     trigger: Mapped[str] = mapped_column(sa.String(20))
-    """'scheduled' | 'adhoc' | 'manual'"""
+    """'adhoc' | 'manual'"""
 
     status: Mapped[str] = mapped_column(sa.String(20))
-    """'queued' | 'rendered' | 'sent' | 'failed'"""
+    """'processing' (claim) | 'rendered' | 'sent' | 'skipped' | 'failed'"""
 
     s3_key: Mapped[str | None] = mapped_column(sa.String(1000))
     message_id: Mapped[str | None] = mapped_column(sa.String(200))

@@ -23,7 +23,7 @@ from pptcreator.models.enum import ChartObjects, ChartType
 OVERVIEW_SLIDE = 0
 DETAIL_SLIDE = 1
 
-# Fixed until the run identifier comes from the KPI source
+# Fallback for {laufkennung} when the KPI source does not know the snapshot's run
 LAUFKENNUNG = "V11"
 
 
@@ -60,6 +60,7 @@ def build_output_slides(
     template_slots: dict[int, list[str]],
     charts_per_detail_slide: int | None = None,
     show_data_labels: bool | None = None,
+    brand_policy: "BrandPolicy | None" = None,
 ) -> list[dict]:
     validate_template_slots(template_slots)
     overview_slots = template_slots[OVERVIEW_SLIDE]
@@ -71,11 +72,14 @@ def build_output_slides(
     output_slides: list[dict] = []
     for result in results:
         result.validate()
-        text_values = _text_values(result)
+        text_values = _text_values(result, brand_policy)
         slides = [_overview_slide(result, overview_slots, show_data_labels)]
         slides.extend(_detail_slides(result, detail_slots, per_slide, show_data_labels))
         for slide in slides:
-            slide["text_values"] = text_values
+            slide["text_values"] = {
+                **text_values,
+                "kpi_explanation": _explanation(result) if slide["template_slide"] == OVERVIEW_SLIDE else "",
+            }
         output_slides.extend(slides)
 
     logging.info(f"Built {len(output_slides)} output slides for {len(results)} KPI(s).")
@@ -117,12 +121,23 @@ def _week(period: ReportPeriod, *, short: bool = False) -> str:
     return label
 
 
-def _text_values(result: KpiResult) -> dict[str, str]:
-    """Placeholders of the template's 'Targets' box and data source line."""
+def _text_values(result: KpiResult, brand_policy: "BrandPolicy | None" = None) -> dict[str, str]:
+    """Placeholders of the template's 'Targets' box, data source line and footnote.
+
+    ``footnote`` is always present: an empty string blanks the token, so brands without a
+    footnote row never show a literal ``{footnote}`` on the slide. ``kpi_explanation`` is
+    added per slide by the caller (overview slide only). ``datenquelle_run`` is the current
+    snapshot's run, 'V01-B (46/2025)'; the week label when the source does not know it.
+    """
+    run_label = result.current.run_label
+    metric = result.definition.metric
     return {
         "brand": result.brand,
         "week": _week(result.current.period),
-        "laufkennung": LAUFKENNUNG,
+        "laufkennung": run_label.split(" (")[0] if run_label else LAUFKENNUNG,
+        "datenquelle_run": run_label or _week(result.current.period),
+        "showed_Bkas": (metric.showed_bkas if metric else "") or "alle BKAs",
+        "footnote": brand_policy.footnote_text if brand_policy else "",
         "target_label1": "",
         "target_text1": "",
         "target_label2": "",
@@ -150,11 +165,51 @@ def _avg_text(result: KpiResult, text: str | None) -> str:
     return f"{label} {text}"
 
 
+def _uses_metric(result: KpiResult, snapshot: KpiSnapshot) -> bool:
+    """The KPI has a configured metric and the source computed it (Leitstand only)."""
+    return result.definition.metric is not None and snapshot.metric_text is not None
+
+
+EXPLANATION_MARK = "*"
+"""Links the overview value ('45 %*') to its explanation ('* Anteil rote BKAs')."""
+
+
+def _explanation_text(result: KpiResult) -> str:
+    metric = result.definition.metric
+    return metric.explanation_text if metric is not None else ""
+
+
+def _explanation(result: KpiResult) -> str:
+    text = _explanation_text(result)
+    return f"{EXPLANATION_MARK} {text}" if text else ""
+
+
+def _overview_value(result: KpiResult, snapshot: KpiSnapshot) -> str:
+    if _uses_metric(result, snapshot):
+        value = result.definition.metric.render(snapshot.metric_text)
+    else:
+        value = _avg_text(result, snapshot.average_text)
+    # Only mark a value whose explanation is actually on the slide
+    if value and _explanation_text(result):
+        value += EXPLANATION_MARK
+    return value
+
+
+def _commodity_metric_value(result: KpiResult, snapshot: KpiSnapshot, commodity: str) -> str:
+    """Metric value of a COM; a COM without value gets the metric's empty text ('0 %'),
+    avg_age without value falls back to the number of BKAs as before."""
+    metric = result.definition.metric
+    text = snapshot.commodity_metric_text.get(commodity) or metric.empty_text
+    if text is None:
+        return _total_text(snapshot.commodity_rows[commodity])
+    return metric.render(text)
+
+
 def _overview_lines(result: KpiResult, snapshot: KpiSnapshot) -> list[list[tuple[str, str]]]:
     """Template: '{week} – {brand}' (week bold) / '{kpi}'."""
     return [
         [(_week(snapshot.period), "first"), (f" – {result.brand}", "rest")],
-        [(_avg_text(result, snapshot.average_text), "first")],
+        [(_overview_value(result, snapshot), "first")],
     ]
 
 
@@ -235,8 +290,25 @@ def _commodity_headline(
 ) -> list[list[tuple[str, str]]]:
     """Template: '{COM} {kpi}' / '{different KW}: {kpi}'.
 
-    {kpi} is the average (KPI with ``average_label``) or the number of BKAs/errors.
+    {kpi} is the configured metric (e.g. '45 %'), else the average (KPI with
+    ``average_label``) or the number of BKAs/errors. '-' when the reference week has no
+    data for the COM.
     """
+    if _uses_metric(result, cur):
+        current_value = _commodity_metric_value(result, cur, commodity)
+        if commodity in ref.commodity_rows:
+            reference_value = (
+                _commodity_metric_value(result, ref, commodity)
+                if _uses_metric(result, ref)
+                else _total_text(ref.commodity_rows[commodity])
+            )
+        else:
+            reference_value = "-"
+        return [
+            [(f"{commodity} {current_value}", "first")],
+            [(f"{_week(ref.period, short=True)}: {reference_value}", "first")],
+        ]
+
     label = result.definition.average_label
     cur_avg = cur.commodity_average_text.get(commodity)
     if label is not None and cur_avg:

@@ -10,11 +10,12 @@ import logging
 
 from pycore.easy import storage
 
-from pptcreator.infra import mailer
-
 
 def send_email(config_dict: dict) -> str | None:
     """Send the deck referenced by ``config_dict``. Returns the SES MessageId or None."""
+    # Imported here: the render image does not contain the sender package
+    from sender import mailer
+
     try:
         target_file_name = f"{config_dict['target_file_name']}.pptx"
         target_blob_container = config_dict["target_blob_container"]

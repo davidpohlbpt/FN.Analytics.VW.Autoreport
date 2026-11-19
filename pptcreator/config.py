@@ -1,7 +1,8 @@
 """Project settings.
 
 All values are read from environment variables (case-insensitive) and can be set in
-``.env`` for local runs. In AWS Lambda they are provided by the SAM template; secrets
+``.env`` for local runs. In AWS Lambda they are set as environment variables of each
+function; secrets
 are injected from Secrets Manager into the environment and read by pycore's EnvVault.
 """
 
@@ -26,6 +27,10 @@ class CreatorSettings(BaseSettings):
     ``all``. Empty -> ``default_template_id``, else all active templates. A
     ``template_id`` / ``template_ids`` in the event takes precedence."""
 
+    state_machine_arn: str | None = None
+    """STATE_MACHINE_ARN: the plan Lambda starts this Step Function (render -> send ->
+    record), only when there is something to send. Empty -> plan only returns its output."""
+
     # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"
     """Container (folder) in pycore storage holding the template and the outputs."""
@@ -45,18 +50,8 @@ class CreatorSettings(BaseSettings):
     """When set, decks are uploaded to s3://<s3_output_bucket>/<s3_output_prefix>/,
     overriding ``target_location`` of the template row."""
 
-    # --------------------------------- SES ----------------------------------- #
-    mail_enabled: bool = False
-    """When false, the e-mail step is skipped and only logged."""
-
-    ses_sender: str | None = None
-    """Verified SES sender address."""
-
-    ses_recipients_mode: str = Field(default="bcc", pattern="^(bcc|to)$")
-    """Whether recipients are placed in ``To`` or ``Bcc``."""
-
-    ses_max_attachment_mb: int = 35
-    """SES hard limit is 40 MB for the whole raw message; keep a safety margin."""
+    # ---------------------------------- AWS ----------------------------------- #
+    # Mail settings (MAIL_ENABLED, SES_*) belong to the send Lambda: functions/send/sender/config.py
 
     aws_region: str | None = Field(default=None, validation_alias="AWS_REGION_NAME")
     """Region for boto3 clients. Read from ``AWS_REGION_NAME`` because ``AWS_REGION`` is a

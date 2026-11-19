@@ -10,40 +10,48 @@ file storage under `/tmp`, secrets from environment variables). `pycore` is unch
 
 ## Architecture
 
-Three Lambdas orchestrated by a Step Functions state machine
-(`deployment/state_machine.asl.json`), all built from the same container image with
-different handlers:
+An EventBridge schedule calls the plan Lambda every few minutes. Plan reads the recipient
+rows with `send_now = 1` and, only if there are any, starts the Step Function with the
+decks to send. Plan, render and record run from one container image (pycore, ODBC driver,
+VPC access to SQL Server and DQN) with different handlers. Send is a separate ZIP function
+(`functions/send/sender`, standard library + boto3 only) without VPC, database or DQN
+access. Lambdas, Step Function and schedule are created by hand in AWS.
 
 ```
-EventBridge (weekly) ──┐
-EventBridge (5 min)  ──┴──> Step Functions
-                              Plan   (Lambda 1, lambdas/plan.py)   control tables -> [ReportRequest + template snapshot]
-                              Map over requests (concurrency 2)
-                                Render (Lambda 2, lambdas/render.py) one request -> deck in S3
-                                Send   (Lambda 3, lambdas/send.py)   deck in S3 -> SES e-mail
+EventBridge (every 5 min, input {})
+  -> Plan   (Lambda 1, image, lambdas/plan.py)     send_now rows -> [request]; nothing to send -> stop
+     starts the Step Function (STATE_MACHINE_ARN) with the plan output:
+       Map over $.requests
+         Render (Lambda 2, image, lambdas/render.py)   one request -> deck in S3
+         Send   (Lambda 3, ZIP, functions/send)        deck in S3 -> SES e-mail
+       Record (Lambda 4, image, lambdas/record.py)    outcomes of all decks -> run log, clears send_now
 ```
 
 | Lambda | Handler | Input | Output | Side effects |
 |---|---|---|---|---|
-| 1 Plan | `pptcreator.lambdas.plan.handler` | `{"trigger": "scheduled"\|"adhoc"}` (+ optional `template_ids`/`template_id`, `current_period`, `run_id`) | `{"run_id", "template_ids", "count", "errors", "requests": [...]}`; every request carries a `template` snapshot (template link, KPI definitions, file name/subject pattern) | run log rows `queued`; `send_now` cleared for ad hoc rows |
-| 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written `ReportRequest` without `template` (`deployment/events/render_request.json`; then the control tables are read) | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`) | deck in S3; run log `rendered`/`failed`; raises on failure |
-| 3 Send | `pptcreator.lambdas.send.handler` | the `RenderResult` (+ optional `recipients` override) | `{"status": "sent", "message_id"}` | SES mail; run log `sent`/`failed` |
-| all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "manual"\|"scheduled"\|"adhoc", ...}` | summary per deck | same, in one process (local runs, single-Lambda deployment) |
+| 1 Plan | `pptcreator.lambdas.plan.handler` | `{}` (optional `template_ids`/`template_id`, `recipient_ids`) | `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids"}], "errors", "execution_arn"}`; one request per recipient row with `send_now = 1`, directly usable as render input | run log rows `processing` (the claim); rows with an open claim are skipped; starts the Step Function when `STATE_MACHINE_ARN` is set and there is something to send |
+| 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written one (`deployment/events/render_request.json`); template and KPI mappings are read from the control tables | `RenderResult` (`bucket`, `s3_key`, `file_name`, `slides`, `email_subject`, `request` incl. `recipients`) | deck in S3; run log `rendered`/`failed`; raises on failure |
+| 3 Send | `sender.app.handler` (ZIP) | the `RenderResult` as JSON (+ optional `recipients` override) | `{"status": "sent"\|"skipped", "request", "recipients", "message_id", "error"}` | SES mail; raises on failure |
+| 4 Record | `pptcreator.lambdas.record.handler` | `{"results": [Map output]}` | `{"recorded", "sent", "skipped", "failed", "cleared"}` | run log `sent` / `skipped` / `failed`; `send_now` cleared for sent and skipped rows |
+| all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "adhoc"\|"manual", ...}` | summary per deck | render + send in one process (local runs only; needs `functions/send` on the path, which `poetry install` and pytest provide) |
 
-The plan Lambda reads the template and KPI mapping tables once per run and passes them
-on, so every deck of a run uses the same configuration and a failed deck can be replayed
-with its Step Functions input. Templates per run: event `template_ids`/`template_id` >
-`PLAN_TEMPLATE_IDS` > `DEFAULT_TEMPLATE_ID` > all active templates. A template that fails
-to plan is reported in `errors` without blocking the others; if all fail, or the output
-would exceed the Step Functions payload limit, the plan Lambda raises before any side
-effect. `pptcreator.lambda_handler.plan_handler`/`render_handler`/`send_handler` remain as
-aliases.
+The `RenderResult` is the contract between the image and the send ZIP: both sides only
+share JSON. `tests/unit/test_lambda_handler.py` feeds real render output into the send
+handler, and `tests/unit/sender/test_isolation.py` fails if the send package ever
+imports pycore, python-pptx, pandas or `pptcreator`.
+
+Templates per run: event `template_ids`/`template_id` > `PLAN_TEMPLATE_IDS` >
+`DEFAULT_TEMPLATE_ID` > all active templates. Only the sender of a row gets its deck; the
+reference and current week come from the recipient row. A template that fails to plan is
+reported in `errors` without blocking the others; if all fail, or the output would exceed
+the Step Functions payload limit, the plan Lambda raises before any side effect.
+`pptcreator.lambda_handler.plan_handler`/`render_handler`/`record_handler` remain as aliases.
 
 Lambda 2 is the core:
 
 ```
-render_deck(request, template snapshot)
-  - get_template_config        (only without snapshot: T_Control_Autoreport_Templates + _Mappings)
+render_deck(request)
+  - get_template_config        (T_Control_Autoreport_Templates + _Mappings)
   - s3_sync.download_template  (template_link s3://... -> pycore storage in /tmp)
   - get_kpi_deck_config
       - discover_chart_slots   (template: 2 overview charts, N commodity slots)
@@ -59,15 +67,23 @@ Config Center) is still present and used by the older tests.
 
 ## Control tables (ReportDB, schema `control`)
 
-DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`.
+DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`,
+per-brand presentation in `004_brand_policy.sql`, value under each donut in `005_kpi_metrics.sql`,
+week dropdowns and the frontend's recipient columns in `006_dropdown_runs.sql`, and data source
+wording in `008_kpi_data_source_text.sql`. Run 008 before deploying the application version
+that reads its column.
 
 | Table | Purpose | Key columns |
 |---|---|---|
 | `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `email_subject` |
-| `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` |
+| `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` (deprecated: only used when the KPI has no row in `T_Control_Autoreport_KpiMetrics`) |
+| `T_Control_Autoreport_KpiMetrics` | value under each donut, per KPI (all brands/templates) | `kpi_key`, `metric_type` (`avg_age`/`percent`/`ratio`/`count`), `numerator_columns` / `denominator_columns` (comma-separated columns of `T_RESULT_Leitstand_Overview`, summed with the donut's filter; `NULL` = donut total), `numerator_not_null_column` (only rows where it is not NULL), `label` (prefix, e.g. `Ø`), `explanation_text` (`{kpi_explanation}` on the overview slide), `showed_bkas` (data source wording on both slides), `is_active`. Structured on purpose, no SQL; invalid rows are ignored with a warning. **No active row ⇒ previous behaviour** (`average_label`). Percent `45 %` (whole number), ratio `120 / 30`; no data ⇒ `0 %` / `0 / 0` |
 | `T_Control_Autoreport_Brands` | brand master list (frontend dropdown) | `brand_name` (display), `filter_value` (`EK_ORG` value), `is_active` |
-| `T_Control_Autoreport_Recipients` | one row per deck a user wants | `template_id`, `email`, `brand_id` (FK Brands), `reference_year` + `reference_week` (ISO, **mandatory**, no default), `send_now`, `is_active`; unique per (email, template, brand, reference week). Same brand with several weeks = several decks; rows with identical (template, brand, week) share one deck |
-| `T_Control_Autoreport_Runs` | audit log | `run_id`, `brand`, periods, `status` (`queued`/`rendered`/`sent`/`failed`), `s3_key`, `message_id`, `error` |
+| `T_Control_Autoreport_BrandCommodities` | per-brand commodity presentation | `brand_id` (FK Brands), `com_source` (`COM` in `T_RESULT_Leitstand_Overview`), `com_label` (headline label, enables renames), `sort_order`, `show_if_zero`, `is_active`. **No active rows for a brand ⇒ default behaviour** (all COMs, source labels/order, zeros skipped). Rows ⇒ whitelist + rename + order + zero-fill |
+| `T_Control_Autoreport_BrandFeatures` | per-brand feature switches | `brand_id` (FK Brands), `feature_key`, `feature_value` (`''` = explicitly off), `is_active`. **No active rows ⇒ feature off.** Supported key: `footnote_text` = text of the template's `{footnote}` token, so only that brand shows a footnote. Unknown keys are ignored with a warning |
+| `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_id` (FK Brands), `report_week` + `comparison_week` (**mandatory**; the dropdown string `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`; dates `2025-11-28` and `2025-KW46` are accepted too), `send_now`, `IsDeleted` (soft delete, never planned). The backend splits the run string and finds the snapshot by `LAUFKENNUNG` + `LAUF_KW` in `T_RESULT_Leitstand_Overview`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and weeks; two rows with the same brand and weeks write the same file name (later overwrites earlier) |
+| `dbo.V_Autoreport_DropdownValues` | frontend dropdowns (`006_dropdown_runs.sql`) | active brands; `report_week` = every run in `T_RESULT_Leitstand_Overview` as `LAUFKENNUNG (LAUF_KW)`, `comparison_week` = the same without the latest run, `sort_date` = the run's AnalyseZeitpunkt (the frontend sorts by it, newest first, through its data source config `T_CONTROL_Report_DataSourceColumns` (data source 9502, `OrderBy`/`OrderParameter`), also set by 006; a view cannot carry an order). Read live, so a new weekly load appears automatically; snapshots without `LAUFKENNUNG` are not offered. `T_Control_Autoreport_Weeks` is no longer used |
+| `T_Control_Autoreport_Runs` | audit log and the claim that prevents double sends | `run_id`, `template_id`, `user_email`, `recipient_id`, `brand`, `primary_date`, `reference_date`, `status` (`processing`/`rendered`/`sent`/`skipped`/`failed`), `s3_key`, `message_id`, `error` |
 
 Data sources per KPI:
 
@@ -107,9 +123,10 @@ Key switches:
 | `SQL_CONN_SSM_PARAM` (+ `SQL_ODBC_DRIVER`, `SQL_ENCRYPT`, `SQL_TRUST_SERVER_CERTIFICATE`) | Lambda: read an ADO-style connection string (`Server=..;Initial Catalog=..;User ID=..;Password=..`) from SSM and set `LOCAL_SQLSERVER_CONN_STR`/`LOCAL_SQLSERVER_DB` |
 | `S3_OUTPUT_BUCKET` | upload decks to `s3://<S3_OUTPUT_BUCKET>/<S3_OUTPUT_PREFIX>/`, overriding `target_location` of the template row |
 | `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
-| `PLAN_TEMPLATE_IDS` | plan Lambda: templates per run, e.g. `1,3` or `all` (SAM parameter `PlanTemplateIds`) |
+| `PLAN_TEMPLATE_IDS` | plan Lambda: templates per run, e.g. `1,3` or `all` |
+| `STATE_MACHINE_ARN` | plan Lambda: when set, plan starts this Step Function (render → send → record) itself, only if rows with `send_now = 1` were planned; the execution input is the plan output. Needs `states:StartExecution`. Empty → plan only returns its output |
 | `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
-| `MAIL_ENABLED`, `SES_SENDER`, `SES_RECIPIENTS_MODE` | e-mail |
+| `MAIL_ENABLED`, `SES_SENDER`, `SES_RECIPIENTS_MODE`, `SES_MAX_ATTACHMENT_MB` | e-mail; read by the send package (`functions/send/sender/config.py`) straight from the environment |
 | `KPI_SOURCE_OVERRIDE` (`stub`/`frontend`/`backend`) | force one source for all KPIs (testing) |
 | `KPI_TABLE`, `DQN_FILTER_*` | backend / frontend source specifics |
 | `AWS_REGION_NAME` | boto3 region (`AWS_REGION` is reserved in Lambda) |
@@ -161,7 +178,7 @@ snapshot before the current one if that week has no data for the brand.
 The equivalent through the Lambda entry points:
 
 ```powershell
-poetry run pptcreator scheduled --current 2025-KW48
+poetry run pptcreator adhoc       # render and send every row with send_now = 1
 poetry run pptcreator manual --brand Audi --reference 2025-KW40 --current 2025-KW48
 ```
 
@@ -176,23 +193,32 @@ PowerPoint (needs `pywin32`, dev only). `--current latest` uses the newest snaps
 `--reference previous` the snapshot before the current one; dates and weeks
 (`2025-KW46`) work as well.
 
+The brand policy (`T_Control_Autoreport_BrandCommodities` / `_BrandFeatures`) is applied
+whenever the tables exist; without them every brand keeps the default behaviour.
+`--no-brand-policy` skips it explicitly.
+
 With `S3_ENABLED=false` the template must exist in `<LOCAL_BLOB_DIR>/<storage_container>/`;
 with `MAIL_ENABLED=false` the deck is rendered but not sent. Rendered decks from the
 tests are written to `tests/result/` for visual inspection.
 
 ## Deployment
 
-- `deployment/Dockerfile` -- Lambda container image. Installs ODBC Driver 18, then
-  `requirements-docker.txt` (pinned, generated from `poetry.lock`) with `pycore` from
-  the vendored wheel in `vendor/`. No credentials are needed at build time.
+- `deployment/Dockerfile` -- Lambda container image for plan, render and record. Installs
+  ODBC Driver 18, then `requirements-docker.txt` (pinned, generated from `poetry.lock`)
+  with `pycore` from the vendored wheel in `vendor/`. No credentials are needed at build
+  time. The send Lambda is not in the image.
+- `functions/send/` -- code of the send Lambda; zip this folder as is and upload it
+  (no third-party packages, boto3 comes with the runtime). Handler `sender.app.handler`.
 - `deployment/certs/` -- drop internal root CA `.pem` files here if the DQN host or
   SQL Server use a VW-internal CA; they are bundled into the image and trusted
   automatically (never committed).
-- `deployment/template.yaml` -- SAM stack: Lambda in VPC, S3 bucket, EventBridge weekly
-  rule (disabled by default), IAM, log group. Secrets are resolved from Secrets Manager.
+- AWS resources (Lambdas, Step Function, EventBridge schedule, IAM) are created by hand.
+  Image Lambdas: plan `pptcreator.lambdas.plan.handler` (env `STATE_MACHINE_ARN`, needs
+  `states:StartExecution`), render `pptcreator.lambdas.render.handler`, record
+  `pptcreator.lambdas.record.handler`. Schedule: `rate(5 minutes)` -> plan Lambda, input `{}`.
 - `.github/workflows/deploy.yml` -- PRs and pushes to `main` run tests only. Tags `v*`
-  and manual runs also build, push to ECR, `sam deploy`, and upload the template to
-  the bucket (branches -> dev, tags `v*` -> prod).
+  and manual runs also build, push to ECR and point the Lambdas in `LAMBDA_FUNCTIONS`
+  at the new image (branches -> dev, tags `v*` -> prod).
 
 After changing dependencies: `poetry lock`, then `python deployment/export_requirements.py`.
 After a pycore update: see `vendor/README.md`.
@@ -229,6 +255,24 @@ docker push <account>.dkr.ecr.<region>.amazonaws.com/vw-autoreport:latest
 - Template slide 1 must hold exactly two charts (reference, current); template slide 2
   holds the commodity slots and is repeated when a brand has more commodities than slots.
 - Other non-empty text boxes (e.g. `Targets` and the data source line) are copied as is,
-  with `{brand}`, `{week}` (current week), `{laufkennung}` (fixed `V11` for now) and
+  with `{brand}`, `{week}` (current week), `{laufkennung}` (the current snapshot's
+  `LAUFKENNUNG`, e.g. `V01-B`), `{datenquelle_run}` (current run as
+  `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`; the week label if the run is unknown) and
   `{target_label1|2}` / `{target_text1|2}` (empty for now) filled in. Unknown
   placeholders stay visible. Empty boxes such as `Chart 2 Status` are not rendered.
+- `{footnote}` holds the brand's `footnote_text` from
+  `control.T_Control_Autoreport_BrandFeatures`. It is always substituted: a brand without
+  the feature gets an empty string and the shape is removed from the output slide, so no
+  literal `{footnote}` and no empty text box ever reaches the deck. Put the token on the
+  slides the footnote should appear on; it is currently on slide 2 only.
+- `{kpi_explanation}` holds the KPI's `explanation_text` from
+  `control.T_Control_Autoreport_KpiMetrics` on the overview slide (template slide 1),
+  prefixed with `* `; the value under the overview donuts then ends with `*` (e.g. `45 %*`).
+  It is empty on detail slides, so the shape is removed there and for KPIs without a text.
+- Put `{showed_Bkas}` in place of `alle BKAs` in the data source text on both template
+  slides. It is filled from the KPI metric's `showed_bkas`; a missing, empty or inactive
+  metric defaults to `alle BKAs`. Script 008 sets `alle BKAs mit roten Wochen` for
+  `rote_bka` and `alle BKAs mit UVB Fehlern` for `uvb_fehlercode`, without overwriting
+  existing text. This wording does not change the underlying data filters.
+- S3-backed templates are downloaded for each report, so replacing a template in S3
+  also updates subsequent reports in warm Lambda environments.

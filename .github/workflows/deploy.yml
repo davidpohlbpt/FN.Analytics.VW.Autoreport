@@ -1,20 +1,21 @@
-# CI/CD for the VW Autoreport Lambda.
+# CI/CD for the VW Autoreport Lambdas.
 #
 # The image build needs no external credentials: pycore is vendored as a wheel in
-# ./vendor and all pins live in requirements-docker.txt.
+# ./vendor and all pins live in requirements-docker.txt. The Lambdas, the Step Function
+# and the EventBridge schedule are created by hand in AWS; this workflow only builds the
+# image, pushes it and points the existing image Lambdas at it.
 #
 # Required repository configuration:
 #   secrets.AWS_DEPLOY_ROLE_ARN_DEV   IAM role assumable via GitHub OIDC (dev account)
 #   secrets.AWS_DEPLOY_ROLE_ARN_PROD  IAM role assumable via GitHub OIDC (prod account)
-#   vars.AWS_REGION                   e.g. eu-central-1
-#   vars.ECR_REPOSITORY               e.g. vw-autoreport
-#   vars.SUBNET_IDS / vars.SECURITY_GROUP_IDS / vars.SES_SENDER / vars.DQN_HOST
-#   vars.SQL_CONN_SECRET_ARN / vars.DQN_CREDENTIALS_SECRET_ARN
-#   optional: vars.MAIL_ENABLED, vars.WEEKLY_SCHEDULE_ENABLED
+#   vars.AWS_REGION                   e.g. eu-west-1
+#   vars.ECR_REPOSITORY               e.g. vw_autoreport_render
+#   vars.LAMBDA_FUNCTIONS             image Lambdas to update, comma-separated,
+#                                     e.g. vw-autoreport-plan,vw-autoreport-render,vw-autoreport-record
 #
 # PRs / main -> test only
-# v*         -> test, build, push, deploy to prod (environment protection rule recommended)
-# manual     -> test, build, push, deploy (dev for branches, prod for v* tags)
+# v*         -> test, build, push, update the Lambdas in prod (environment protection rule recommended)
+# manual     -> test, build, push, update the Lambdas (dev for branches, prod for v* tags)
 
 name: deploy
 
@@ -86,35 +87,13 @@ jobs:
             --push .
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-      - name: Install SAM CLI
-        uses: aws-actions/setup-sam@v2
-        with:
-          use-installer: true
-
-      - name: Deploy
+      - name: Update the Lambda functions
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          LAMBDA_FUNCTIONS: ${{ vars.LAMBDA_FUNCTIONS }}
         run: |
-          sam deploy \
-            --template-file deployment/template.yaml \
-            --stack-name "vw-autoreport-${STAGE}" \
-            --region "${{ vars.AWS_REGION }}" \
-            --capabilities CAPABILITY_IAM \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset \
-            --resolve-s3 \
-            --parameter-overrides \
-              Stage="${STAGE}" \
-              ImageUri="${{ steps.build.outputs.image }}" \
-              SubnetIds="${{ vars.SUBNET_IDS }}" \
-              SecurityGroupIds="${{ vars.SECURITY_GROUP_IDS }}" \
-              SesSender="${{ vars.SES_SENDER }}" \
-              DqnHost="${{ vars.DQN_HOST }}" \
-              SqlConnStringSecretArn="${{ vars.SQL_CONN_SECRET_ARN }}" \
-              DqnCredentialsSecretArn="${{ vars.DQN_CREDENTIALS_SECRET_ARN }}" \
-              MailEnabled="${{ vars.MAIL_ENABLED || 'false' }}" \
-              WeeklyScheduleEnabled="${{ vars.WEEKLY_SCHEDULE_ENABLED || 'false' }}"
-
-      - name: Upload template to the report bucket
-        run: |
-          BUCKET=$(aws cloudformation describe-stacks --stack-name "vw-autoreport-${STAGE}" \
-            --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text)
-          aws s3 cp tests/unit/test_data/VW_Template_Overview.pptx "s3://${BUCKET}/templates/VW_Template_Overview.pptx"
+          for fn in ${LAMBDA_FUNCTIONS//,/ }; do
+            aws lambda update-function-code --function-name "$fn" --image-uri "$IMAGE" >/dev/null
+            aws lambda wait function-updated --function-name "$fn"
+            echo "$fn -> $IMAGE"
+          done

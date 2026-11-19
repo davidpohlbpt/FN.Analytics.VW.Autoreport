@@ -47,13 +47,6 @@ class StorageLocation:
     def file_name(self) -> str:
         return self.key.rsplit("/", 1)[-1]
 
-    def to_event(self) -> dict:
-        return dataclasses.asdict(self)
-
-    @classmethod
-    def from_event(cls, event: dict) -> StorageLocation:
-        return cls(bucket=event.get("bucket"), key=event["key"], container=event.get("container"))
-
     @classmethod
     def parse(cls, link: str, *, default_container: str) -> StorageLocation:
         link = (link or "").strip().replace("\\", "/")
@@ -92,38 +85,6 @@ class TemplateConfig:
     def render_subject(self, brand: str, current: ReportPeriod, reference: ReportPeriod) -> str:
         pattern = self.email_subject or "VW KPI Report {brand}: {current} vs. {reference}"
         return pattern.format(brand=brand, current=current, reference=reference)
-
-    def to_event(self) -> dict:
-        """JSON snapshot handed from the plan Lambda to the render Lambda."""
-        return {
-            "id": self.id,
-            "name": self.name,
-            "template": self.template.to_event(),
-            "language": self.language.value,
-            "target_file_name": self.target_file_name,
-            "target": self.target.to_event() if self.target else None,
-            "commodity_charts_per_slide": self.commodity_charts_per_slide,
-            "email_subject": self.email_subject,
-            "kpis": [dataclasses.asdict(kpi) for kpi in self.kpis],
-        }
-
-    @classmethod
-    def from_event(cls, event: dict) -> TemplateConfig:
-        kpis = [KpiDefinition(**kpi) for kpi in event["kpis"]]
-        # The render Lambda's own override still applies to a planned snapshot
-        if settings.kpi_source_override:
-            kpis = [dataclasses.replace(k, source=settings.kpi_source_override) for k in kpis]
-        return cls(
-            id=int(event["id"]),
-            name=event.get("name") or f"template {event['id']}",
-            template=StorageLocation.from_event(event["template"]),
-            language=Languages(event.get("language") or settings.report_language),
-            target_file_name=event.get("target_file_name") or "",
-            target=StorageLocation.from_event(event["target"]) if event.get("target") else None,
-            commodity_charts_per_slide=event.get("commodity_charts_per_slide"),
-            email_subject=event.get("email_subject"),
-            kpis=kpis,
-        )
 
 
 # ------------------------------------------------------------------------------ #
@@ -257,29 +218,42 @@ def _parse_palette(raw, mapping_id) -> dict[str, str]:
 
 @dataclasses.dataclass
 class RecipientGroup:
+    """One recipient row = one deck. ``emails`` holds the single row's address."""
+
     template_id: int
     brand: str
     """Brand filter value (EK_ORG), used for the data query, file name and headlines"""
-    reference_period: ReportPeriod
+    report_week: str
+    """Current run as stored by the frontend, e.g. 'V01-D (48/2025)'"""
+    comparison_week: str
+    """Comparison run as stored by the frontend"""
     emails: list[str]
     recipient_ids: list[int]
 
+    @property
+    def current_period(self) -> ReportPeriod:
+        return ReportPeriod.parse(self.report_week)
+
+    @property
+    def reference_period(self) -> ReportPeriod:
+        return ReportPeriod.parse(self.comparison_week)
+
 
 RECIPIENT_COLUMNS = [
-    "id", "template_id", "email", "brand_id", "reference_year", "reference_week", "send_now", "brand",
+    "id", "template_id", "email", "brand_id", "report_week", "comparison_week", "send_now", "brand",
 ]
 
 
-def read_recipients(template_id: int, *, only_send_now: bool = False) -> pd.DataFrame:
-    """Active recipient rows of a template joined with their active brand.
+def read_recipients(template_id: int, *, send_now_only: bool = True) -> pd.DataFrame:
+    """Recipient rows of a template that requested a deck (``send_now = 1``); the local
+    preview passes ``send_now_only=False`` to render every row.
 
     Adds a ``brand`` column holding the brand's ``filter_value``. Rows whose brand is
-    unknown or inactive are dropped with a warning.
+    unknown or inactive and soft-deleted rows (``IsDeleted``) are dropped.
     """
-    columns, values = ["template_id", "is_active"], [template_id, True]
-    if only_send_now:
-        columns.append("send_now")
-        values.append(True)
+    columns, values = ["template_id", "IsDeleted"], [template_id, False]
+    if send_now_only:
+        columns, values = columns + ["send_now"], values + [True]
     data = read_data(AutoreportRecipients, columns, values)
     if data is None or data.empty:
         return pd.DataFrame(columns=RECIPIENT_COLUMNS)
@@ -298,21 +272,28 @@ def read_recipients(template_id: int, *, only_send_now: bool = False) -> pd.Data
     return data[data["brand"].notna()]
 
 
+def period_of(row: dict, column: str) -> ReportPeriod:
+    """Week of a recipient row -> ReportPeriod. Mandatory; the format is checked here,
+    the existence of the run by the KPI source (with a clear error if it is missing).
+    """
+    value = _str_or_none(row.get(column))
+    if not value:
+        raise ValueError(f"{column} is mandatory.")
+    return ReportPeriod.parse(value)
+
+
 def reference_period_of(row: dict) -> ReportPeriod:
-    """ISO year + week of a recipient row -> ReportPeriod. Both are mandatory."""
-    year, week = _int_or_none(row.get("reference_year")), _int_or_none(row.get("reference_week"))
-    if year is None or week is None:
-        raise ValueError("reference week is mandatory (reference_year and reference_week).")
-    try:
-        dt.date.fromisocalendar(year, week, 1)
-    except ValueError as exc:
-        raise ValueError(f"invalid reference week {year}-KW{week:02d} ({exc}).") from exc
-    return ReportPeriod.parse(f"{year}-KW{week:02d}")
+    """Backwards compatible name for the comparison week of a recipient row."""
+    return period_of(row, "comparison_week")
 
 
 def group_recipients(recipients: pd.DataFrame, template_id: int) -> list[RecipientGroup]:
-    """One group per (brand, reference period). Rows with bad data are skipped with a warning."""
-    groups: dict[tuple[str, str], RecipientGroup] = {}
+    """One group (= one deck) per recipient row; rows with bad data are skipped.
+
+    Deliberately no merging: two rows with the same brand and dates still produce two
+    decks, so each user's row keeps its own history and file name.
+    """
+    groups: list[RecipientGroup] = []
     for row in recipients.to_dict("records"):
         email = _str_or_none(row.get("email"))
         brand = _str_or_none(row.get("brand"))
@@ -320,18 +301,25 @@ def group_recipients(recipients: pd.DataFrame, template_id: int) -> list[Recipie
             logging.warning(f"Recipient {row.get('id')} skipped: missing email or brand.")
             continue
         try:
-            reference = reference_period_of(row)
+            primary = period_of(row, "report_week")
+            reference = period_of(row, "comparison_week")
         except ValueError as exc:
             logging.warning(f"Recipient {row.get('id')} skipped: {exc}")
             continue
-        key = (brand, str(reference))
-        group = groups.setdefault(
-            key, RecipientGroup(template_id, brand, reference, [], [])
+        if primary == reference:
+            logging.warning(f"Recipient {row.get('id')} skipped: report_week and comparison_week are identical ({primary}).")
+            continue
+        groups.append(
+            RecipientGroup(
+                template_id=template_id,
+                brand=brand,
+                report_week=str(primary),
+                comparison_week=str(reference),
+                emails=[email],
+                recipient_ids=[int(row["id"])],
+            )
         )
-        if email.lower() not in [e.lower() for e in group.emails]:
-            group.emails.append(email)
-        group.recipient_ids.append(int(row["id"]))
-    return list(groups.values())
+    return groups
 
 
 # ------------------------------------------------------------------------------ #

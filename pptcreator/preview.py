@@ -64,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     from pptcreator.creator.get_config.get_template_config import get_template_config
     from pptcreator.kpi.base import ReportPeriod
     from pptcreator.kpi.build_output_slides import build_output_slides, discover_chart_slots
+    from pptcreator.kpi.kpi_metric import attach_metrics, load_kpi_metrics
     from pptcreator.kpi.leitstand_source import LeitstandKpiSource
     from pptcreator.kpi.registry import get_kpis
 
@@ -82,7 +83,10 @@ def main(argv: list[str] | None = None) -> int:
     current, reference = ReportPeriod.parse(current_date), ReportPeriod.parse(reference_date)
     print(f"Brand {args.brand!r}: current {current_date} ({current.display}) vs. reference {reference_date} ({reference.display})")
 
-    results = [source.fetch(kpi, args.brand, current, reference) for kpi in get_kpis(args.kpi)]
+    results = [
+        source.fetch(kpi, args.brand, current, reference)
+        for kpi in attach_metrics(get_kpis(args.kpi), load_kpi_metrics())
+    ]
 
     template = pathlib.Path(args.template)
     container = "preview"

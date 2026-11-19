@@ -1,12 +1,11 @@
 """Orchestration of the report creation.
 
-Three processes live here, one per Lambda of the state machine, plus the legacy
-per-template report:
+Two processes of the state machine live here, plus the legacy per-template report.
+Sending (Lambda 3) is the separate ``sender`` package in ``functions/send``.
 
 * ``plan_decks``     (Lambda 1) recipients table -> list of ReportRequest
 * ``render_deck``    (Lambda 2) ReportRequest -> deck in S3 (the core of the system)
-* ``send_deck``      (Lambda 3) deck in S3 -> e-mail via SES
-* ``run_deck``       all three in one process, for local runs and the single-Lambda mode
+* ``run_deck``       render + send in one process, for local runs
 * ``graph_steer_creation_process`` -- legacy per-template report (control tables +
   DQN Config Center, one slide per filter value)
 """
@@ -33,8 +32,8 @@ from pptcreator.creator.get_config.get_autoreport_config import (
 from pptcreator.creator.get_config.get_kpi_deck_config import ReportRequest, get_kpi_deck_config
 from pptcreator.creator.get_config.graph_get_config import graph_get_config
 from pptcreator.creator.send_email.send_email import send_email
-from pptcreator.infra import mailer, s3_sync
-from pptcreator.kpi.base import KpiSource, ReportPeriod
+from pptcreator.infra import s3_sync
+from pptcreator.kpi.base import KpiSource
 from pptcreator.kpi.router import RoutingKpiSource
 from pptcreator.models.models import Templates
 from pptcreator.utils.read_data import read_data
@@ -99,7 +98,8 @@ def _get_template_ids():
 
 @dataclasses.dataclass
 class RenderResult:
-    """Output of Lambda 2; everything Lambda 3 needs is in here (no DB access needed)."""
+    """Output of Lambda 2 and input of the send Lambda (functions/send/sender/app.py),
+    which reads it as plain JSON; keep both sides in sync (see the contract test)."""
 
     status: str  # "rendered" | "failed"
     request: dict
@@ -117,18 +117,6 @@ class RenderResult:
         return dataclasses.asdict(self)
 
 
-@dataclasses.dataclass
-class SendResult:
-    status: str  # "sent" | "skipped" | "failed"
-    request: dict
-    message_id: str | None = None
-    recipients: list[str] = dataclasses.field(default_factory=list)
-    error: str | None = None
-
-    def as_dict(self) -> dict:
-        return dataclasses.asdict(self)
-
-
 # ------------------------------------------------------------------------------ #
 # Lambda 1: plan
 # ------------------------------------------------------------------------------ #
@@ -136,44 +124,38 @@ class SendResult:
 
 def plan_decks(
     *,
-    trigger: str,
     template_id: int | None = None,
-    current_period: str | ReportPeriod | None = None,
     run_id: str | None = None,
     template: TemplateConfig | None = None,
 ) -> list[ReportRequest]:
-    """Read the recipient table and build one ReportRequest per (brand, reference period).
+    """One ReportRequest per recipient row with ``send_now = 1``.
 
-    Every recipient row carries its own (mandatory) reference week; there is no default.
-    ``trigger='adhoc'`` only picks rows with ``send_now = 1``. The flag is NOT cleared
-    here; the caller (planner Lambda) does that once the requests were handed over.
+    The flag is NOT cleared here; the record step does that once the deck was sent.
     """
     template = template or get_template_config(template_id)
-    current = ReportPeriod.parse(current_period or current_calendar_week())
     run_id = run_id or str(uuid.uuid4())
 
-    recipients = read_recipients(template.id, only_send_now=(trigger == "adhoc"))
+    recipients = read_recipients(template.id)
     groups = group_recipients(recipients, template.id)
-    logging.info(f"{trigger}: {len(recipients)} recipient rows -> {len(groups)} group(s) for template {template.id}")
+    logging.info(f"{len(recipients)} recipient row(s) with send_now -> {len(groups)} deck(s) for template {template.id}")
 
     requests: list[ReportRequest] = []
     for group in groups:
-        reference = group.reference_period
         try:
             requests.append(
                 ReportRequest.create(
                     brand=group.brand,
-                    current_period=current,
-                    reference_period=reference,
+                    current_period=group.current_period,
+                    reference_period=group.reference_period,
                     recipients=group.emails,
                     template_id=template.id,
                     run_id=run_id,
-                    trigger=trigger,
+                    trigger="adhoc",
                     recipient_ids=group.recipient_ids,
                 )
             )
         except ValueError as exc:
-            logging.warning(f"Group {group.brand}/{reference} skipped: {exc}")
+            logging.warning(f"Recipient {group.recipient_ids} skipped: {exc}")
     return requests
 
 
@@ -245,7 +227,8 @@ def render_deck(
 def _fetch_template(location: StorageLocation, container: str) -> str:
     if location.is_s3:
         return s3_sync.download_template(
-            container, location.file_name, bucket=location.bucket, key=location.key
+            container, location.file_name, bucket=location.bucket, key=location.key,
+            force=settings.s3_enabled,
         )
     # Non-S3 link: the file is expected in pycore storage already (local runs)
     source_container = location.container or container
@@ -261,64 +244,7 @@ def _fetch_template(location: StorageLocation, container: str) -> str:
 
 
 # ------------------------------------------------------------------------------ #
-# Lambda 3: send
-# ------------------------------------------------------------------------------ #
-
-
-def send_deck(render: RenderResult | dict, recipients: list[str] | None = None) -> SendResult:
-    """E-mail a rendered deck. Reads the file from S3 (or pycore storage in local runs)."""
-    if isinstance(render, dict):
-        render = RenderResult(**render)
-    request = render.request
-    recipients = recipients if recipients is not None else list(request.get("recipients") or [])
-    result = SendResult(status="failed", request=request, recipients=recipients)
-
-    try:
-        if render.status != "rendered" or not render.file_name:
-            result.status = "skipped"
-            result.error = f"Nothing to send: render status is {render.status!r} ({render.error})."
-            return result
-        if not recipients:
-            result.status = "skipped"
-            result.error = "No recipients."
-            return result
-        if not settings.mail_enabled:
-            result.status = "skipped"
-            result.error = "mail_enabled is false."
-            logging.warning(f"mail_enabled is false; '{render.file_name}' not sent to {recipients}.")
-            return result
-
-        if render.s3_key and render.bucket:
-            data = s3_sync.download_bytes(render.bucket, render.s3_key)
-        else:
-            from pycore.easy import storage
-
-            data = storage.read_blob(
-                container_name=render.container or settings.storage_container,
-                blob_name=render.file_name,
-                decode=False,
-            )
-
-        subject = render.email_subject or f"Report: {render.file_name}"
-        intro = render.email_intro or "Please find the attached PowerPoint report:"
-        result.message_id = mailer.send_pptx(
-            recipients=recipients,
-            subject=subject,
-            html_body=f"<p>{intro} <strong>{render.file_name}</strong>.</p>",
-            text_body=f"{intro} {render.file_name}",
-            attachment_name=render.file_name,
-            attachment_bytes=data,  # type: ignore[arg-type]
-        )
-        result.status = "sent"
-    except Exception as exc:
-        logging.exception(f"Send for {request.get('brand')} failed: {exc}")
-        result.status = "failed"
-        result.error = f"{type(exc).__name__}: {exc}"
-    return result
-
-
-# ------------------------------------------------------------------------------ #
-# All-in-one (local runs, single-Lambda deployment)
+# All-in-one (local runs)
 # ------------------------------------------------------------------------------ #
 
 
@@ -357,13 +283,25 @@ def run_deck(
     if render.status != "rendered":
         return outcome
 
-    sent = send_deck(render)
-    if sent.status == "sent":
+    # Imported here: the render image does not contain the sender package
+    from sender.app import send
+
+    data = None
+    if not render.s3_key:
+        from pycore.easy import storage
+
+        data = storage.read_blob(
+            container_name=render.container or settings.storage_container,
+            blob_name=render.file_name,
+            decode=False,
+        )
+    sent = send(render.as_dict(), data=data)
+    if sent["status"] == "sent":
         outcome.status = "sent"
-        outcome.message_id = sent.message_id
-    elif sent.status == "failed":
+        outcome.message_id = sent["message_id"]
+    elif sent["status"] == "failed":
         outcome.status = "failed"
-        outcome.error = sent.error
+        outcome.error = sent["error"]
     else:
         outcome.status = "rendered"
     return outcome
@@ -374,18 +312,11 @@ def steer_kpi_deck_process(request: ReportRequest, source: KpiSource | None = No
     return run_deck(request, source)
 
 
-def steer_scheduled_kpi_decks(
-    source: KpiSource | None = None,
-    *,
-    trigger: str = "scheduled",
-    template_id: int | None = None,
-    current_period: str | ReportPeriod | None = None,
+def steer_send_now_decks(
+    source: KpiSource | None = None, *, template_id: int | None = None
 ) -> list[DeckOutcome]:
-    requests = plan_decks(
-        trigger=trigger,
-        template_id=template_id,
-        current_period=current_period,
-    )
+    """Local all-in-one run: render and send every deck with ``send_now = 1``."""
+    requests = plan_decks(template_id=template_id)
     if not requests:
         return []
     template = get_template_config(requests[0].template_id)
@@ -407,13 +338,11 @@ __all__ = [
     "DeckOutcome",
     "RecipientGroup",
     "RenderResult",
-    "SendResult",
     "current_calendar_week",
     "graph_steer_creation_process",
     "plan_decks",
     "render_deck",
     "run_deck",
-    "send_deck",
     "steer_kpi_deck_process",
-    "steer_scheduled_kpi_decks",
+    "steer_send_now_decks",
 ]

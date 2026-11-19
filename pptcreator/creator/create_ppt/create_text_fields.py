@@ -24,8 +24,13 @@ def create_text_fields(slide: Slide, template_slide: Slide, values: dict[str, st
         element = copy.deepcopy(shape._element)
         element.nvSpPr.cNvPr.id = slide.shapes._next_shape_id
         slide.shapes._spTree.append(element)
-        for paragraph in slide.shapes[-1].text_frame.paragraphs:
+        copied = slide.shapes[-1]
+        for paragraph in copied.text_frame.paragraphs:
             fill_placeholders(paragraph, values)
+        # A shape whose whole content resolves to nothing (e.g. '{footnote}' for a brand
+        # without a footnote text) is not part of the deck; remove it again.
+        if not copied.text_frame.text.strip():
+            slide.shapes._spTree.remove(element)
 
 
 def _is_text_field(shape) -> bool:

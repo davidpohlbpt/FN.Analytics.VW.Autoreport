@@ -35,6 +35,7 @@ import sqlalchemy as sa
 from pycore.easy import database
 
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod, Rows
+from pptcreator.kpi.kpi_metric import METRIC_AVG_AGE, KpiMetric
 
 OVERVIEW_TABLE = os.getenv("LEITSTAND_TABLE", "ReportDB.dbo.T_RESULT_Leitstand_Overview")
 CONFIG_DB = os.getenv("LEITSTAND_CONFIG_DB", "ReportDB")
@@ -84,7 +85,7 @@ class LeitstandKpiSource:
         self._engine = engine
         self.language = language.upper()
         self.with_average = with_average
-        self._dates: list[dt.date] | None = None
+        self._runs: dict[dt.date, str | None] | None = None
 
     @property
     def engine(self):
@@ -110,13 +111,21 @@ class LeitstandKpiSource:
         resolved = dataclasses.replace(definition, palette=palette)
 
         is_age_kpi = set(AGE_COLUMNS) <= {s.column for s in meta.slices}
-        with_avg = self.with_average and is_age_kpi and definition.average_label is not None
+        metric = definition.metric
+        if metric is None:
+            with_avg = self.with_average and is_age_kpi and definition.average_label is not None
+        elif metric.metric_type == METRIC_AVG_AGE:
+            with_avg = self.with_average and is_age_kpi
+            if not is_age_kpi:
+                logging.warning(f"{definition.id}: avg_age metric needs the age columns of chart 12000; no value shown.")
+        else:
+            with_avg = False
 
         result = KpiResult(
             definition=resolved,
             brand=brand,
-            current=self._snapshot(meta, brand, current, with_avg),
-            reference=self._snapshot(meta, brand, reference, with_avg),
+            current=self._snapshot(meta, brand, current, with_avg, metric),
+            reference=self._snapshot(meta, brand, reference, with_avg, metric),
         )
         result.validate()
         return result
@@ -126,11 +135,27 @@ class LeitstandKpiSource:
     # -------------------------------------------------------------------------- #
 
     def available_dates(self) -> list[dt.date]:
-        if self._dates is None:
-            sql = sa.text(f"SELECT DISTINCT AnalyseZeitpunkt FROM {OVERVIEW_TABLE} ORDER BY AnalyseZeitpunkt")
+        return sorted(self._load_runs())
+
+    def run_label(self, snapshot_date: dt.date) -> str | None:
+        """'V01-B (46/2025)' of a snapshot; None for snapshots without LAUFKENNUNG."""
+        return self._load_runs().get(snapshot_date)
+
+    def _load_runs(self) -> dict[dt.date, str | None]:
+        """AnalyseZeitpunkt -> 'LAUFKENNUNG (LAUF_KW)' (one run per snapshot in the data)."""
+        if self._runs is None:
+            sql = sa.text(
+                f"SELECT AnalyseZeitpunkt, MAX(LAUFKENNUNG) AS run, MAX(LAUF_KW) AS week "
+                f"FROM {OVERVIEW_TABLE} GROUP BY AnalyseZeitpunkt"
+            )
             with self.engine.connect() as con:
-                self._dates = [_as_date(r[0]) for r in con.execute(sql) if r[0] is not None]
-        return self._dates
+                rows = con.execute(sql).all()
+            self._runs = {
+                _as_date(day): (f"{str(run).strip()} ({str(week).strip()})" if run and week else None)
+                for day, run, week in rows
+                if day is not None
+            }
+        return self._runs
 
     def latest_date(self) -> dt.date:
         dates = self.available_dates()
@@ -146,6 +171,15 @@ class LeitstandKpiSource:
 
     def resolve_date(self, period: ReportPeriod) -> dt.date:
         dates = self.available_dates()
+        if period.run is not None:
+            # The exact run first (LAUFKENNUNG + LAUF_KW); otherwise the week in the brackets
+            matches = [d for d in dates if self.run_label(d) == str(period)]
+            if matches:
+                return matches[-1]
+            week, year = period.run[1].split("/")
+            fallback = ReportPeriod.parse(f"{year}-KW{int(week):02d}")
+            logging.warning(f"No snapshot for run {period}; resolving its calendar week {fallback} instead.")
+            return self.resolve_date(fallback)
         if period.date is not None:
             if period.date in dates:
                 return period.date
@@ -168,7 +202,9 @@ class LeitstandKpiSource:
     # Data
     # -------------------------------------------------------------------------- #
 
-    def _snapshot(self, meta: ChartMeta, brand: str, period: ReportPeriod, with_avg: bool) -> KpiSnapshot:
+    def _snapshot(
+        self, meta: ChartMeta, brand: str, period: ReportPeriod, with_avg: bool, metric: KpiMetric | None = None
+    ) -> KpiSnapshot:
         snapshot_date = self.resolve_date(period)
         columns = [s.column for s in meta.slices]
         sums = ", ".join(f"SUM(COALESCE({_q(c)}, 0)) AS {_q(c)}" for c in columns)
@@ -178,12 +214,14 @@ class LeitstandKpiSource:
             avg_sql = (
                 f", SUM(CAST({_q(AVG_AGE_COLUMN)} AS FLOAT) * ({weight})) / NULLIF(SUM({weight}), 0) AS avg_age_days"
             )
+        value_metric = metric if metric is not None and metric.metric_type != METRIC_AVG_AGE else None
+        metric_sql = _metric_sql(value_metric, columns) if value_metric else ""
         where = "WHERE AnalyseZeitpunkt = :d AND MOD = :mod AND EK_ORG = :brand"
         params = {"d": snapshot_date, "mod": MOD_ALL, "brand": brand}
 
-        total_sql = sa.text(f"SELECT {sums}{avg_sql} FROM {OVERVIEW_TABLE} {where}")
+        total_sql = sa.text(f"SELECT {sums}{avg_sql}{metric_sql} FROM {OVERVIEW_TABLE} {where}")
         com_sql = sa.text(
-            f"SELECT COM, {sums}{avg_sql} FROM {OVERVIEW_TABLE} {where} GROUP BY COM ORDER BY COM"
+            f"SELECT COM, {sums}{avg_sql}{metric_sql} FROM {OVERVIEW_TABLE} {where} GROUP BY COM ORDER BY COM"
         )
         with self.engine.connect() as con:
             total = con.execute(total_sql, params).mappings().first()
@@ -195,6 +233,7 @@ class LeitstandKpiSource:
 
         commodity_rows: dict[str, Rows] = {}
         commodity_avg: dict[str, str] = {}
+        commodity_metric: dict[str, str] = {}
         for row in by_com:
             com = (row["COM"] or "").strip() or "ohne COM"
             rows = _rows(meta, row)
@@ -203,17 +242,33 @@ class LeitstandKpiSource:
             commodity_rows[com] = rows
             if with_avg and row.get("avg_age_days") is not None:
                 commodity_avg[com] = format_age(row["avg_age_days"])
+            if value_metric is not None:
+                commodity_metric[com] = value_metric.format(row["metric_num"], row["metric_den"])
+
+        average_text = (
+            format_age(total["avg_age_days"]) if with_avg and total.get("avg_age_days") is not None else None
+        )
+        if value_metric is not None:
+            metric_text = value_metric.format(total["metric_num"], total["metric_den"])
+        elif metric is not None and with_avg:  # avg_age metric: the average is the value
+            metric_text, commodity_metric = average_text, dict(commodity_avg)
+        else:
+            metric_text = None
 
         logging.info(
             f"chart {meta.chart_id} {brand} {period} -> {snapshot_date}: "
             f"{sum(r['value'] for r in total_rows):.0f} total, {len(commodity_rows)} commodities"
+            + (f", value {metric_text!r}" if metric_text is not None else "")
         )
         return KpiSnapshot(
             period=ReportPeriod(label=_period_label(period, snapshot_date)),
             total_rows=total_rows,
             commodity_rows=commodity_rows,
-            average_text=format_age(total["avg_age_days"]) if with_avg and total.get("avg_age_days") is not None else None,
+            average_text=average_text,
             commodity_average_text=commodity_avg,
+            metric_text=metric_text,
+            commodity_metric_text=commodity_metric,
+            run_label=self.run_label(snapshot_date),
         )
 
     # -------------------------------------------------------------------------- #
@@ -324,6 +379,8 @@ def _period_label(period: ReportPeriod, snapshot: dt.date) -> str:
     """Headline label; the actual snapshot week when it differs from the requested one."""
     year, week, _ = snapshot.isocalendar()
     actual = f"KW{week:02d}"
+    if period.run is not None:
+        return period.display  # the run's LAUF_KW, same week as in the Datenquelle line
     if period.date is not None:
         return f"{actual}/{year}"
     requested = str(period).split("-")[-1]
@@ -342,6 +399,21 @@ def _q(column: str) -> str:
     if not _SAFE_COLUMN.match(column):
         raise ValueError(f"Unsafe column name {column!r}")
     return f"[{column}]"
+
+
+def _metric_sql(metric: KpiMetric, donut_columns: list[str]) -> str:
+    """', <numerator> AS metric_num, <denominator> AS metric_den' for the snapshot query.
+
+    Empty column lists mean the donut total. Column names are validated by ``_q``.
+    """
+
+    def row_sum(cols) -> str:
+        return " + ".join(f"COALESCE({_q(c)}, 0)" for c in (cols or donut_columns))
+
+    numerator = row_sum(metric.numerator_columns)
+    if metric.numerator_not_null_column:
+        numerator = f"CASE WHEN {_q(metric.numerator_not_null_column)} IS NOT NULL THEN {numerator} ELSE 0 END"
+    return f", SUM({numerator}) AS metric_num, SUM({row_sum(metric.denominator_columns)}) AS metric_den"
 
 
 def _as_date(value) -> dt.date:

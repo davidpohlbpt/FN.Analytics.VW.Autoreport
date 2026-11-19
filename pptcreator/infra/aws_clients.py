@@ -13,13 +13,13 @@ def s3_client():
 
 
 @functools.lru_cache(maxsize=None)
-def ses_client():
+def stepfunctions_client():
     import boto3
 
-    return boto3.client("ses", region_name=settings.aws_region)
+    return boto3.client("stepfunctions", region_name=settings.aws_region)
 
 
 def reset_clients() -> None:
     """Drop cached clients, e.g. between moto-mocked tests."""
     s3_client.cache_clear()
-    ses_client.cache_clear()
+    stepfunctions_client.cache_clear()

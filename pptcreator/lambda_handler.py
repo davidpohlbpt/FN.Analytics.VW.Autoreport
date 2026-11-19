@@ -1,13 +1,15 @@
 """Local CLI, all-in-one handler and backwards compatible Lambda entry points.
 
-The state machine Lambdas live in ``pptcreator.lambdas`` (one module each):
+The state machine Lambdas from the render image live in ``pptcreator.lambdas``:
 
 ``pptcreator.lambdas.plan.handler``    Lambda 1  (alias ``plan_handler``)
 ``pptcreator.lambdas.render.handler``  Lambda 2  (alias ``render_handler``)
-``pptcreator.lambdas.send.handler``    Lambda 3  (alias ``send_handler``)
+``pptcreator.lambdas.record.handler``  Lambda 4  (alias ``record_handler``)
 
-``handler``  (all-in-one, for local runs and a single-Lambda deployment)
-    in:  {"mode": "scheduled" | "adhoc" | "manual", ...}
+Lambda 3 (send) is the separate ZIP package ``functions/send/sender``.
+
+``handler``  (all-in-one, for local runs; needs the sender package on the path)
+    in:  {"mode": "adhoc" | "manual", ...}   adhoc (default): every row with send_now = 1
     out: summary with one entry per deck
 """
 
@@ -24,17 +26,16 @@ from pptcreator.creator.graph_steer_creation_process import (  # noqa: E402
     DeckOutcome,
     current_calendar_week,
     run_deck,
-    steer_scheduled_kpi_decks,
+    steer_send_now_decks,
 )
 from pptcreator.kpi.base import KpiSource  # noqa: E402
 from pptcreator.lambdas.plan import PlanFailed  # noqa: E402,F401
 from pptcreator.lambdas.plan import handler as plan_handler  # noqa: E402,F401
+from pptcreator.lambdas.record import handler as record_handler  # noqa: E402,F401
 from pptcreator.lambdas.render import RenderFailed  # noqa: E402,F401
 from pptcreator.lambdas.render import handler as render_handler  # noqa: E402
-from pptcreator.lambdas.send import SendFailed  # noqa: E402,F401
-from pptcreator.lambdas.send import handler as send_handler  # noqa: E402,F401
 
-MODES = ("scheduled", "manual", "adhoc")
+MODES = ("adhoc", "manual")
 
 
 # ------------------------------------------------------------------------------ #
@@ -44,7 +45,7 @@ MODES = ("scheduled", "manual", "adhoc")
 
 def run(event: dict | None, source: KpiSource | None = None) -> dict:
     event = _normalise_event(event)
-    mode = event.get("mode", "scheduled")
+    mode = event.get("mode", "adhoc")
     if mode not in MODES:
         raise ValueError(f"Unknown mode {mode!r}; expected one of {MODES}.")
 
@@ -62,12 +63,7 @@ def run(event: dict | None, source: KpiSource | None = None) -> dict:
         )
         outcomes = [run_deck(request, source)]
     else:
-        outcomes = steer_scheduled_kpi_decks(
-            source,
-            trigger=mode,
-            template_id=event.get("template_id"),
-            current_period=event.get("current_period"),
-        )
+        outcomes = steer_send_now_decks(source, template_id=event.get("template_id"))
 
     return _summary(mode, outcomes)
 
@@ -96,7 +92,7 @@ def _summary(mode: str, outcomes: list[DeckOutcome]) -> dict:
 
 
 # ------------------------------------------------------------------------------ #
-# CLI for local runs: `poetry run pptcreator scheduled --current 2025-KW48`
+# CLI for local runs: `poetry run pptcreator adhoc`
 # ------------------------------------------------------------------------------ #
 
 
@@ -115,10 +111,8 @@ def cli(argv: list[str] | None = None) -> int:
     manual.add_argument("--recipient", action="append", default=[], help="Recipient e-mail (repeatable)")
     manual.add_argument("--kpi", action="append", default=[], help="KPI key subset (repeatable)")
 
-    scheduled = commands.add_parser("scheduled", help="One deck per recipient/brand from the control tables")
-    scheduled.add_argument("--current", default=None, help="Current period, default: this week")
-    scheduled.add_argument("--template-id", type=int, default=None, help="Template id; default: the only active one")
-    scheduled.add_argument("--adhoc", action="store_true", help="Only rows with send_now = 1")
+    adhoc = commands.add_parser("adhoc", help="Render and send every recipient row with send_now = 1")
+    adhoc.add_argument("--template-id", type=int, default=None, help="Template id; default: the only active one")
 
     render = commands.add_parser("render", help="Render the ReportRequest stored in a JSON file")
     render.add_argument("event_file", help="JSON file with one ReportRequest")
@@ -136,13 +130,8 @@ def cli(argv: list[str] | None = None) -> int:
             "kpi_ids": args.kpi or None,
         }
         result = run(event)
-    elif args.command == "scheduled":
-        event = {
-            "mode": "adhoc" if args.adhoc else "scheduled",
-            "current_period": args.current,
-            "template_id": args.template_id,
-        }
-        result = run(event)
+    elif args.command == "adhoc":
+        result = run({"mode": "adhoc", "template_id": args.template_id})
     else:
         with open(args.event_file, encoding="utf-8") as fh:
             result = render_handler(json.load(fh), None)
