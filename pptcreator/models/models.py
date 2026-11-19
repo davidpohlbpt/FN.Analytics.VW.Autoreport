@@ -306,6 +306,9 @@ class AutoreportKpiMetrics(DeclarativeBase):
     explanation_text: Mapped[str | None] = mapped_column(sa.String(500))
     """Text of the template's {kpi_explanation} token on the overview slide"""
 
+    showed_bkas: Mapped[str | None] = mapped_column(sa.String(200))
+    """Data source wording for the template's {showed_Bkas} token"""
+
     is_active: Mapped[bool] = mapped_column(default=True)
 
 

@@ -49,6 +49,8 @@ class KpiMetric:
 
     explanation_text: str = ""
 
+    showed_bkas: str = ""
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "numerator_columns", tuple(self.numerator_columns))
         object.__setattr__(self, "denominator_columns", tuple(self.denominator_columns))
@@ -135,6 +137,7 @@ def load_kpi_metrics() -> dict[str, KpiMetric]:
                 denominator_columns=_columns(row.get("denominator_columns")),
                 label=_text(row.get("label")) or "",
                 explanation_text=_text(row.get("explanation_text")) or "",
+                showed_bkas=_text(row.get("showed_bkas")) or "",
             )
         except ValueError as exc:
             logging.warning(f"Ignoring KPI metric row {row.get('id')}: {exc}")

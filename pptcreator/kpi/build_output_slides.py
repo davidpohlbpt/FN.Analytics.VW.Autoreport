@@ -130,11 +130,13 @@ def _text_values(result: KpiResult, brand_policy: "BrandPolicy | None" = None) -
     snapshot's run, 'V01-B (46/2025)'; the week label when the source does not know it.
     """
     run_label = result.current.run_label
+    metric = result.definition.metric
     return {
         "brand": result.brand,
         "week": _week(result.current.period),
         "laufkennung": run_label.split(" (")[0] if run_label else LAUFKENNUNG,
         "datenquelle_run": run_label or _week(result.current.period),
+        "showed_Bkas": (metric.showed_bkas if metric else "") or "alle BKAs",
         "footnote": brand_policy.footnote_text if brand_policy else "",
         "target_label1": "",
         "target_text1": "",

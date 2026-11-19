@@ -39,7 +39,8 @@ def _row(id_, key, metric_type, **kw):
         "id": id_, "kpi_key": key, "metric_type": metric_type,
         "numerator_columns": kw.get("num"), "numerator_not_null_column": kw.get("not_null"),
         "denominator_columns": kw.get("den"), "label": kw.get("label"),
-        "explanation_text": kw.get("text"), "is_active": kw.get("active", True),
+        "explanation_text": kw.get("text"), "showed_bkas": kw.get("showed_bkas"),
+        "is_active": kw.get("active", True),
     }
 
 
@@ -48,7 +49,8 @@ def test_load_metrics_from_the_control_table(data_repo):
     data_repo.write_table(
         model=AutoreportKpiMetrics,
         df=pd.DataFrame([
-            _row(1, "uvb_fehlercode", "percent", num="y", not_null="GrauUVB", den="y", text="Anteil grauer BKAs"),
+            _row(1, "uvb_fehlercode", "percent", num="y", not_null="GrauUVB", den="y", text="Anteil grauer BKAs",
+                 showed_bkas="alle BKAs mit UVB Fehlern"),
             _row(2, "kapazitaet_saisonalitaet", "percent", num="Kap2to5, Kap6to10,KapOver10", den="y"),
             _row(3, "rote_bka", "ratio", den="RedOver52"),
             _row(4, "bka_abgleichstatus", "percent", num="Rot", den="y", active=False),
@@ -61,6 +63,8 @@ def test_load_metrics_from_the_control_table(data_repo):
     assert sorted(metrics) == ["kapazitaet_saisonalitaet", "rote_bka", "uvb_fehlercode"]  # inactive/invalid ignored
     assert metrics["uvb_fehlercode"].numerator_not_null_column == "GrauUVB"
     assert metrics["uvb_fehlercode"].explanation_text == "Anteil grauer BKAs"
+    assert metrics["uvb_fehlercode"].showed_bkas == "alle BKAs mit UVB Fehlern"
+    assert metrics["rote_bka"].showed_bkas == ""
     assert metrics["kapazitaet_saisonalitaet"].numerator_columns == ("Kap2to5", "Kap6to10", "KapOver10")
     assert metrics["rote_bka"].numerator_columns == () and metrics["rote_bka"].label == ""
 

@@ -1,7 +1,10 @@
 import dataclasses
 
 import pytest
+from pptx import Presentation
+from pptx.util import Inches
 
+from pptcreator.creator.create_ppt.create_text_fields import create_text_fields
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod
 from pptcreator.kpi.brand_policy import FEATURE_FOOTNOTE_TEXT, BrandPolicy
 from pptcreator.kpi.kpi_metric import KpiMetric
@@ -153,6 +156,33 @@ def test_datenquelle_run_comes_from_the_current_snapshot():
     # sources without run information fall back to the week label
     fallback = build_output_slides([_result(["BC"])], template_slots=TEMPLATE_SLOTS)[0]["text_values"]
     assert fallback["datenquelle_run"] == "KW45"
+
+
+@pytest.mark.parametrize(
+    ("wording", "expected"),
+    [
+        ("alle BKAs mit roten Wochen", "alle BKAs mit roten Wochen"),
+        ("alle BKAs mit UVB Fehlern", "alle BKAs mit UVB Fehlern"),
+        ("", "alle BKAs"),
+        (None, "alle BKAs"),
+    ],
+)
+def test_data_source_wording_on_overview_and_all_detail_slides(wording, expected):
+    result = _result([f"C{i}" for i in range(10)])
+    if wording is not None:
+        metric = KpiMetric(kpi_key="t", metric_type="count", showed_bkas=wording)
+        result.definition = dataclasses.replace(result.definition, metric=metric)
+    slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
+    assert len(slides) == 3
+
+    prs = Presentation()
+    template = prs.slides.add_slide(prs.slide_layouts[6])
+    textbox = template.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
+    textbox.text = "Filterung auf Einkaufsorganisation {brand}, {showed_Bkas}, {datenquelle_run}"
+    for output in slides:
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        create_text_fields(slide, template, output["text_values"])
+        assert slide.shapes[0].text == f"Filterung auf Einkaufsorganisation Audi, {expected}, KW45"
 
 
 PERCENT = KpiMetric(kpi_key="t", metric_type="percent", numerator_columns=("Rot",), denominator_columns=("y",),
