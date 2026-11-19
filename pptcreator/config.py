@@ -22,10 +22,6 @@ class CreatorSettings(BaseSettings):
     default_template_id: int | None = None
     """Template used when an event does not name one; None -> the only active template."""
 
-    state_machine_arn: str | None = None
-    """STATE_MACHINE_ARN: the plan Lambda starts this Step Function (render -> send email)
-    when there is something to send. Required by the plan Lambda."""
-
     # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"
     """Container (folder) in pycore storage holding the template and the outputs."""

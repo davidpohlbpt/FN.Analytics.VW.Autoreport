@@ -1,4 +1,4 @@
-"""End-to-end through the plan and render Lambdas and the all-in-one handler.
+"""End-to-end through the render Lambda and the all-in-one handler.
 
 Control tables in pycore's in-memory SQLite, template in moto S3, decks in moto S3, KPI
 data from the stub source. Writes decks to tests/result/.
@@ -8,12 +8,9 @@ import datetime as dt
 import json
 from pathlib import Path
 
-import boto3
 import pandas as pd
 import pytest
-import sqlalchemy as sa
 from pptx import Presentation
-from pycore.easy import database
 
 from pptcreator import lambda_handler
 from pptcreator.config import settings
@@ -26,10 +23,9 @@ from pptcreator.models.models import (
     AutoreportRecipients,
     AutoreportRuns,
 )
-from pptcreator.utils import run_log
 from pptcreator.utils.read_data import read_data
 from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables  # noqa: F401
-from tests.unit.infra.conftest import BUCKET, REGION, aws  # noqa: F401
+from tests.unit.infra.conftest import BUCKET, aws  # noqa: F401
 
 VW_PKW_ID = 42
 
@@ -39,16 +35,19 @@ TEMPLATE_KEY = "templates/VW_Template_Overview.pptx"
 
 
 @pytest.fixture
-def stack(aws, seed_control_tables, easy_test, monkeypatch):  # noqa: F811
+def stack(aws, seed_control_tables, easy_test):  # noqa: F811
     aws["s3"].put_object(Bucket=BUCKET, Key=TEMPLATE_KEY, Body=TEMPLATE.read_bytes())
     seed_control_tables(f"s3://{BUCKET}/{TEMPLATE_KEY}", target_location=f"s3://{BUCKET}/reports/dev")
-    sfn = boto3.client("stepfunctions", region_name=REGION)
-    arn = sfn.create_state_machine(
-        name="vw-autoreport-test", definition=json.dumps({"StartAt": "X", "States": {"X": {"Type": "Succeed"}}}),
-        roleArn="arn:aws:iam::123456789012:role/sfn",
-    )["stateMachineArn"]
-    monkeypatch.setattr(settings, "state_machine_arn", arn)
-    return {**aws, "sfn": sfn, "state_machine_arn": arn}
+    return aws
+
+
+def _request(recipient_id=2, email="b@x.de", brand="Audi", **extra) -> dict:
+    """One state machine item, as built by vw-autoreport-detect."""
+    return {
+        "template_id": TEMPLATE_ID, "brand": brand,
+        "current_period": "2025-11-28", "reference_period": "2025-11-18",
+        "recipients": [email], "recipient_ids": [recipient_id], "run_id": "run-1", **extra,
+    }
 
 
 def _deck(stack, key: str) -> Presentation:
@@ -63,88 +62,8 @@ def _runs() -> pd.DataFrame:
     return read_data(AutoreportRuns, [], [])
 
 
-def _set_send_now(*recipient_ids: int) -> None:
-    table = AutoreportRecipients.__table__
-    with database.engine.begin() as con:
-        con.execute(sa.update(table).where(table.c.id.in_(recipient_ids)).values(send_now=True))
-
-
-# ------------------------------------------------------------------------------ #
-# Lambda 1
-# ------------------------------------------------------------------------------ #
-
-
-def test_plan_picks_send_now_rows_of_active_templates(stack):
-    out = lambda_handler.plan_handler({}, None)
-
-    assert out["count"] == 2  # rows 2 (Audi) and 4 (Seat) have send_now = 1
-    assert out["has_requests"] is True
-    by_email = {r["recipients"][0]: r for r in out["requests"]}
-    assert set(by_email) == {"b@x.de", "d@x.de"}
-    # exactly what render and vw-autoreport-sendemail need, nothing else
-    run_id = by_email["b@x.de"]["run_id"]
-    assert run_id and by_email["d@x.de"]["run_id"] == run_id
-    assert by_email["b@x.de"] == {
-        "template_id": TEMPLATE_ID, "brand": "Audi",
-        "current_period": "2025-11-28", "reference_period": "2025-11-18",
-        "recipients": ["b@x.de"], "recipient_ids": [2], "run_id": run_id,
-    }
-    assert set(out) == {"has_requests", "count", "requests", "execution_arn"}
-
-    # plan claims the rows but does not touch send_now; the send Lambda resets it
-    runs = _runs()
-    assert len(runs) == 2 and set(runs["status"]) == {"processing"}
-    assert set(runs["run_id"]) == {run_id}
-    assert set(runs["recipient_id"]) == {2, 4}
-    assert read_data(AutoreportRecipients, ["id"], [2])["send_now"].iloc[0]
-
-
-def test_plan_starts_one_execution_and_skips_open_claims(stack):
-    sfn, arn = stack["sfn"], stack["state_machine_arn"]
-
-    first = lambda_handler.plan_handler({}, None)
-
-    executions = sfn.list_executions(stateMachineArn=arn)["executions"]
-    assert [e["executionArn"] for e in executions] == [first["execution_arn"]]
-    started_with = json.loads(sfn.describe_execution(executionArn=first["execution_arn"])["input"])
-    assert started_with == {key: first[key] for key in ("has_requests", "count", "requests")}
-
-    # the poller runs again before the first run finished: those rows must not be sent twice
-    second = lambda_handler.plan_handler({}, None)
-    assert second == {"has_requests": False, "count": 0, "requests": []}
-    assert len(sfn.list_executions(stateMachineArn=arn)["executions"]) == 1
-    assert len(_runs()) == 2
-
-    # once the send Lambda wrote a final status, the row is free again
-    for r in first["requests"]:
-        run_log.update_status(None, r["brand"], r["reference_period"], status="failed", recipient_id=r["recipient_ids"][0])
-    assert lambda_handler.plan_handler({}, None)["count"] == 2
-
-
-def test_plan_without_state_machine_fails_before_claiming(stack, monkeypatch):
-    monkeypatch.setattr(settings, "state_machine_arn", None)
-
-    with pytest.raises(lambda_handler.PlanFailed, match="STATE_MACHINE_ARN"):
-        lambda_handler.plan_handler({}, None)
-
-    assert _runs().empty
-
-
-def test_failed_step_function_start_releases_the_claims(stack, monkeypatch):
-    monkeypatch.setattr(settings, "state_machine_arn", f"arn:aws:states:{REGION}:123456789012:stateMachine:missing")
-
-    with pytest.raises(lambda_handler.PlanFailed, match="Could not start"):
-        lambda_handler.plan_handler({}, None)
-
-    assert set(_runs()["status"]) == {"failed"}  # claims closed, send_now still set
-    monkeypatch.setattr(settings, "state_machine_arn", stack["state_machine_arn"])
-    assert lambda_handler.plan_handler({}, None)["count"] == 2  # next poll retries
-
-
-def test_render_accepts_the_plan_output(stack):
-    planned = lambda_handler.plan_handler({}, None)["requests"]
-    request = next(r for r in planned if r["recipient_ids"] == [2])
-    request["kpi_ids"] = ["bka_aktualisierung"]  # keep the test deck small
+def test_render_accepts_the_state_machine_input(stack):
+    request = _request(kpi_ids=["bka_aktualisierung"])  # keep the test deck small
 
     out = lambda_handler.render_handler(request, None)
     assert out["recipient"] == "b@x.de"  # passed on to the send step
@@ -237,8 +156,7 @@ def test_render_handler_missing_template_in_s3(stack):
         )
 
 
-def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F811
-    """The plan snapshot carries the policy, so render never re-reads the brand tables."""
+def test_brand_policy_is_applied_by_render(stack, data_repo):  # noqa: F811
     data_repo.write_table(
         model=AutoreportBrands,
         df=pd.DataFrame(
@@ -290,10 +208,8 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
         ),
     )
 
-    planned = lambda_handler.plan_handler({}, None)
-    request = next(r for r in planned["requests"] if r["recipient_ids"] == [99])
     # kpi_ids is a render-time parameter; keep the test deck small
-    request["kpi_ids"] = ["bka_aktualisierung"]
+    request = _request(99, "vw@example.com", "VW PKW", kpi_ids=["bka_aktualisierung"])
 
     out = lambda_handler.render_handler(request, None)
 
@@ -315,8 +231,7 @@ def test_brand_policy_travels_from_plan_to_render(stack, data_repo):  # noqa: F8
 
 
 def test_render_output_contains_the_send_email_event(stack):
-    plan = lambda_handler.plan_handler({}, None)
-    request = plan["requests"][0]
+    request = _request()
 
     out = json.loads(json.dumps(lambda_handler.render_handler(request, None)))  # as passed by Step Functions
 

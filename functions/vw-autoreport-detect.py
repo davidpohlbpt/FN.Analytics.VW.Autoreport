@@ -10,7 +10,7 @@ def lambda_handler(event, context):
     ssm_client = boto3.client("ssm")
 
     state_machine_arn = os.environ.get("STATE_MACHINE_ARN")
-    time_out = int(os.environ.get("TIME_OUT", "100"))
+    time_out = int(os.environ.get("TIME_OUT"))
     reportdb_param = os.environ.get("REPORT_PARAM")
     sns_url = os.environ.get("SNS_URL")
 

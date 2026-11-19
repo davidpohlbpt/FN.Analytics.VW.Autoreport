@@ -1,13 +1,11 @@
 """Local CLI, all-in-one handler and backwards compatible Lambda entry points.
 
-The state machine Lambdas from the render image live in ``pptcreator.lambdas``:
+The render Lambda lives in ``pptcreator.lambdas.render.handler`` (alias
+``render_handler``). Requests are detected by the separate ZIP function
+``functions/vw-autoreport-detect.py``; e-mails are sent by
+``functions/vw-autoreport-sendemail``.
 
-``pptcreator.lambdas.plan.handler``    Lambda 1  (alias ``plan_handler``)
-``pptcreator.lambdas.render.handler``  Lambda 2  (alias ``render_handler``)
-
-Lambda 3 (send) is the separate ZIP function ``functions/vw-autoreport-sendemail``.
-
-``handler``  (all-in-one, for local runs; renders only, e-mails are sent by Lambda 3)
+``handler``  (all-in-one, for local runs; renders only, no e-mail)
     in:  {"mode": "adhoc" | "manual", ...}   adhoc (default): every row with send_now = 1
     out: summary with one entry per deck
 """
@@ -28,8 +26,6 @@ from pptcreator.creator.graph_steer_creation_process import (  # noqa: E402
     steer_send_now_decks,
 )
 from pptcreator.kpi.base import KpiSource  # noqa: E402
-from pptcreator.lambdas.plan import PlanFailed  # noqa: E402,F401
-from pptcreator.lambdas.plan import handler as plan_handler  # noqa: E402,F401
 from pptcreator.lambdas.render import RenderFailed  # noqa: E402,F401
 from pptcreator.lambdas.render import handler as render_handler  # noqa: E402
 

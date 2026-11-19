@@ -42,7 +42,6 @@ ENV APP_NAME=VwAutoreport \
     LOCAL_BLOB_DIR=/tmp/autoreport_data \
     APP_DB_NAME=ReportDB
 
-# Default = Lambda 2 (render). The plan function overrides the command in its Lambda
-# image configuration (CMD override): pptcreator.lambdas.plan.handler
-# The send Lambda is not part of this image: functions/vw-autoreport-sendemail is a ZIP.
+# Default = render Lambda. vw-autoreport-detect and vw-autoreport-sendemail are ZIP
+# functions in functions/ and are not part of this image.
 CMD ["pptcreator.lambdas.render.handler"]

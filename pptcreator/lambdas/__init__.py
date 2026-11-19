@@ -1,11 +1,9 @@
-"""Lambdas that run from the render image.
+"""Lambda that runs from the render image.
 
-``plan.handler``    Lambda 1: send_now rows -> decks to send; starts the Step Function
-``render.handler``  Lambda 2: one deck -> .pptx in S3
-``record.handler`` was removed: vw-autoreport-sendemail writes the final run status.
+``render.handler``  one state machine request -> .pptx in S3 -> event for send email
 
-Lambda 3 (send) is the separate ZIP function functions/vw-autoreport-sendemail.
-It sends through Microsoft Graph and resets send_now after sending.
+vw-autoreport-detect (ZIP) finds send_now rows and starts the state machine;
+vw-autoreport-sendemail (ZIP) sends the report and resets send_now.
 
 Every module imports ``_bootstrap`` first: it prepares the environment that pycore
 reads at import time.

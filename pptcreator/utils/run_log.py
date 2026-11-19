@@ -1,13 +1,10 @@
-"""Writes to T_Control_Autoreport_Runs: the claim before a deck is built, the outcome after.
+"""Updates T_Control_Autoreport_Runs after rendering a deck.
 
-pycore's DataRepository has no UPDATE helper, so the statements are built with
-SQLAlchemy Core against ``easy.database.engine``. All functions are safe to call when
-the table does not exist yet (they log and return) so that a missing audit table never
-blocks a report.
+pycore's DataRepository has no UPDATE helper, so the statement is built with SQLAlchemy
+Core against ``easy.database.engine``. It is safe to call when the table does not exist
+yet (it logs and returns), so a missing audit table never blocks a report.
 
-The claim is what keeps the 5-10 minute poller from sending the same row twice: Plan
-inserts a row with status 'processing' for every recipient row it hands over, and the
-next poll skips rows that already have an open claim.
+The 'processing' claim is written by vw-autoreport-detect before the state machine starts.
 """
 
 from __future__ import annotations
@@ -16,39 +13,9 @@ import datetime as dt
 import logging
 
 import sqlalchemy as sa
-from pycore.easy import data_repo, database
+from pycore.easy import database
 
 from pptcreator.models.models import AutoreportRuns
-
-OPEN_STATUS = "processing"
-"""Rows with this status are claimed; the poller must not pick them up again."""
-
-
-def log_processing(requests: list) -> None:
-    """Claim every deck: one row per ReportRequest with status 'processing'."""
-    if not requests:
-        return
-    now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
-    rows = [
-        {
-            "run_id": r.run_id,
-            "template_id": r.template_id,
-            "recipient_id": r.recipient_id,
-            "user_email": ";".join(r.recipients)[:1000] or None,
-            "brand": r.brand,
-            "primary_date": str(r.current_period),
-            "reference_date": str(r.reference_period),
-            "trigger": r.trigger,
-            "status": OPEN_STATUS,
-            "created_at": now,
-            "updated_at": now,
-        }
-        for r in requests
-    ]
-    try:
-        data_repo.write_table(model=AutoreportRuns, df=rows)
-    except Exception as exc:
-        logging.warning(f"Could not write the run log claim ({len(rows)} rows): {exc}")
 
 
 def update_status(
@@ -91,19 +58,3 @@ def update_status(
             con.execute(stmt)
     except Exception as exc:
         logging.warning(f"Could not update run log for {run_id}/{brand}/{reference_period}: {exc}")
-
-
-def open_recipient_ids(recipient_ids: list[int]) -> set[int]:
-    """Recipient rows that already have an open claim (status 'processing')."""
-    if not recipient_ids:
-        return set()
-    table = AutoreportRuns.__table__
-    stmt = sa.select(table.c.recipient_id).where(
-        table.c.recipient_id.in_(list(recipient_ids)), table.c.status == OPEN_STATUS
-    )
-    try:
-        with database.engine.connect() as con:
-            return {int(row[0]) for row in con.execute(stmt) if row[0] is not None}
-    except Exception as exc:
-        logging.warning(f"Could not read open claims for {recipient_ids}: {exc}")
-        return set()

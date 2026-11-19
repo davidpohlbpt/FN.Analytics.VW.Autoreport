@@ -90,16 +90,6 @@ class TemplateConfig:
 # ------------------------------------------------------------------------------ #
 
 
-def list_active_template_ids() -> list[int]:
-    rows = read_data(AutoreportTemplates, ["is_active"], [True])
-    if rows is None or rows.empty:
-        return []
-    return sorted(int(i) for i in rows["id"].unique())
-
-
-# ------------------------------------------------------------------------------ #
-
-
 def get_template_config(template_id: int | None = None) -> TemplateConfig:
     """Load one active template and its KPI mappings."""
     template_row = _load_template_row(template_id)

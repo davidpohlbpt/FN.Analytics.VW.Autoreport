@@ -78,6 +78,7 @@ def detect(monkeypatch):
     state = {"aws": FakeAws(), "connection": FakeConnection([])}
     monkeypatch.setenv("STATE_MACHINE_ARN", ARN)
     monkeypatch.setenv("REPORT_PARAM", "Database-Report")
+    monkeypatch.setenv("TIME_OUT", "30")
     monkeypatch.setattr(module, "boto3", types.SimpleNamespace(client=lambda service: state["aws"]))
     monkeypatch.setattr(module, "get_pyodbc_connection", lambda ssm, param, timeout: state["connection"])
     return module, state

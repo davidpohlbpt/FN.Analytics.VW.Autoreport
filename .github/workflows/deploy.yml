@@ -11,7 +11,7 @@
 #   vars.AWS_REGION                   e.g. eu-west-1
 #   vars.ECR_REPOSITORY               e.g. vw_autoreport_render
 #   vars.LAMBDA_FUNCTIONS             image Lambdas to update, comma-separated,
-#                                     e.g. vw-autoreport-plan,vw-autoreport-render,vw-autoreport-record
+#                                     e.g. vw-autoreport-render
 #
 # PRs / main -> test only
 # v*         -> test, build, push, update the Lambdas in prod (environment protection rule recommended)

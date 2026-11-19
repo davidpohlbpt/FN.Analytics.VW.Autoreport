@@ -10,41 +10,33 @@ file storage under `/tmp`, secrets from environment variables). `pycore` is unch
 
 ## Architecture
 
-An EventBridge schedule calls the plan Lambda every few minutes. Plan reads the recipient
-rows with `send_now = 1` and, only if there are any, starts the Step Function with the
-decks to send. Plan and render run from one container image (pycore, ODBC driver, VPC
-access to SQL Server and DQN) with different handlers. Sending is the separate ZIP function
-`functions/vw-autoreport-sendemail`, which uses Microsoft Graph, S3 and SQL Server.
-Lambdas, Step Function and schedule are created by hand in AWS.
+An EventBridge schedule calls `vw-autoreport-detect` every few minutes. Detect reads the
+recipient rows with `send_now = 1`, writes `processing` claims and, only if there are new
+requests, starts the Step Function. Render runs from the container image (pycore, ODBC
+driver, VPC access to SQL Server and DQN). Detect and send email are separate ZIP
+functions in `functions/`. Lambdas, Step Function and schedule are created by hand in AWS.
 
 ```
 EventBridge (every 5 min, input {})
-  -> Plan   (Lambda 1, image, lambdas/plan.py)     send_now rows -> [request]; nothing to send -> stop
-     starts the Step Function (STATE_MACHINE_ARN) with the plan output:
-       Map over $.requests
-         Render (Lambda 2, image, lambdas/render.py)   one request -> deck in S3
-         SendEmail (Lambda 3, ZIP, vw-autoreport-sendemail)
-                                                       render output -> Graph mail -> DB update -> delete deck
+  -> Detect (ZIP, functions/vw-autoreport-detect.py) send_now rows -> claims -> Step Function
+       Map over $.requests (MaxConcurrency 1)
+         Render (image, lambdas/render.py)             one request -> deck in S3
+         SendEmail (ZIP, vw-autoreport-sendemail)      render output -> Graph mail -> DB update -> delete deck
 ```
 
 | Lambda | Handler | Input | Output | Side effects |
 |---|---|---|---|---|
-| 1 Plan | `pptcreator.lambdas.plan.handler` | `{}` | `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids", "run_id"}], "execution_arn"}`; one request per recipient row with `send_now = 1` in an active template | run log rows `processing` (the claim); rows with an open claim are skipped; starts `STATE_MACHINE_ARN` when there is something to send |
-| 2 Render | `pptcreator.lambdas.render.handler` | one request of the plan output, or a hand-written one (`deployment/events/render_request.json`); template and KPI mappings are read from the control tables | `{"recipient", "recipient_id", "run_id", "brand", "bucket", "s3_key", "file_name", "email_subject"}` | deck in S3; run log `rendered`/`failed`; raises on failure |
-| 3 SendEmail | `lambda_function.lambda_handler` (ZIP, `functions/vw-autoreport-sendemail`) | the render output | `{"statusCode": 200, "body"}` | Graph BCC mail; then `send_now = 0`, run log `sent`, generated report deleted. On send failure: run log `failed`, `send_now` and report kept, raises |
+| Detect | `lambda_handler` (ZIP, `functions/vw-autoreport-detect.py`) | `{}` | starts the Step Function with `{"has_requests", "count", "requests": [{"template_id", "brand", "current_period", "reference_period", "recipients", "recipient_ids", "run_id"}]}` | run log rows `processing`; identical requests already processing are skipped |
+| Render | `pptcreator.lambdas.render.handler` | one Step Functions request, or a hand-written one (`deployment/events/render_request.json`); template and KPI mappings are read from the control tables | `{"recipient", "recipient_id", "run_id", "brand", "bucket", "s3_key", "file_name", "email_subject"}` | deck in S3; run log `rendered`/`failed`; raises on failure |
+| SendEmail | `lambda_function.lambda_handler` (ZIP, `functions/vw-autoreport-sendemail`) | the render output | `{"statusCode": 200, "body"}` | Graph BCC mail; then `send_now = 0`, run log `sent`, generated report deleted. On send failure: run log `failed`, `send_now` and report kept, raises |
 | all-in-one | `pptcreator.lambda_handler.handler` | `{"mode": "adhoc"\|"manual", ...}` | summary per deck | render only, for local runs; no e-mail |
 
 The render output is exactly the event read by `vw-autoreport-sendemail`. The Step
 Functions Map handles one recipient per item. `tests/unit/test_lambda_handler.py` checks
-this contract.
+render with the detect request format; `tests/unit/detect/test_detect.py` checks detect.
+`pptcreator.lambda_handler.render_handler` remains as an alias.
 
-Plan reads all active templates from `T_Control_Autoreport_Templates` and the
-`send_now` rows of those templates. Only the sender of a row gets its deck; the reference
-and current week come from the recipient row. If `STATE_MACHINE_ARN` is missing, plan
-raises before writing claims. `pptcreator.lambda_handler.plan_handler`/`render_handler`
-remain as aliases.
-
-Lambda 2 is the core:
+Render is the core:
 
 ```
 render_deck(request)
@@ -120,7 +112,6 @@ Key switches:
 | `SQL_CONN_SSM_PARAM` (+ `SQL_ODBC_DRIVER`, `SQL_ENCRYPT`, `SQL_TRUST_SERVER_CERTIFICATE`) | Lambda: read an ADO-style connection string (`Server=..;Initial Catalog=..;User ID=..;Password=..`) from SSM and set `LOCAL_SQLSERVER_CONN_STR`/`LOCAL_SQLSERVER_DB` |
 | `S3_OUTPUT_BUCKET` | upload decks to `s3://<S3_OUTPUT_BUCKET>/<S3_OUTPUT_PREFIX>/`, overriding `target_location` of the template row |
 | `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
-| `STATE_MACHINE_ARN` | plan Lambda: required; plan starts this Step Function (render → send email) only if rows with `send_now = 1` were planned. Needs `states:StartExecution` |
 | `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
 | `KPI_SOURCE_OVERRIDE` (`stub`/`frontend`/`backend`) | force one source for all KPIs (testing) |
 | `KPI_TABLE`, `DQN_FILTER_*` | backend / frontend source specifics |
@@ -173,7 +164,7 @@ snapshot before the current one if that week has no data for the brand.
 The equivalent through the Lambda entry points:
 
 ```powershell
-poetry run pptcreator adhoc       # render and send every row with send_now = 1
+poetry run pptcreator adhoc       # render every row with send_now = 1 locally, no e-mail
 poetry run pptcreator manual --brand Audi --reference 2025-KW40 --current 2025-KW48
 ```
 
@@ -198,19 +189,21 @@ to `tests/result/` for visual inspection.
 
 ## Deployment
 
-- `deployment/Dockerfile` -- Lambda container image for plan and render. Installs
+- `deployment/Dockerfile` -- Lambda container image for render. Installs
   ODBC Driver 18, then `requirements-docker.txt` (pinned, generated from `poetry.lock`)
   with `pycore` from the vendored wheel in `vendor/`. No credentials are needed at build
-  time. The send Lambda is not in the image.
+  time. Detect and send email are not in the image.
+- `functions/vw-autoreport-detect.py` -- ZIP Lambda that finds new `send_now` rows,
+  writes `processing` claims and starts the Step Function. Needs `STATE_MACHINE_ARN`,
+  `REPORT_PARAM`, the `pyodbc` layer, `states:StartExecution` and reserved concurrency 1.
 - `functions/vw-autoreport-sendemail/` -- code of the Microsoft Graph send Lambda. See
   [Send email Lambda (ZIP)](#send-email-lambda-zip).
 - `deployment/certs/` -- drop internal root CA `.pem` files here if the DQN host or
   SQL Server use a VW-internal CA; they are bundled into the image and trusted
   automatically (never committed).
 - AWS resources (Lambdas, Step Function, EventBridge schedule, IAM) are created by hand.
-  Image Lambdas: plan `pptcreator.lambdas.plan.handler` (env `STATE_MACHINE_ARN`, needs
-  `states:StartExecution`), render `pptcreator.lambdas.render.handler`.
-  Schedule: `rate(5 minutes)` -> plan Lambda, input `{}`.
+  Image Lambda: render `pptcreator.lambdas.render.handler`.
+  Schedule: `rate(5 minutes)` -> `vw-autoreport-detect`, input `{}`.
 - `.github/workflows/deploy.yml` -- PRs and pushes to `main` run tests only. Tags `v*`
   and manual runs also build, push to ECR and point the Lambdas in `LAMBDA_FUNCTIONS`
   at the new image (branches -> dev, tags `v*` -> prod).

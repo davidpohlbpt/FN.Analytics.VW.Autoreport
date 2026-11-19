@@ -1,11 +1,10 @@
 """Orchestration of the report creation.
 
-Two processes of the state machine live here, plus the legacy per-template report.
-Sending (Lambda 3) is the separate ZIP function ``functions/vw-autoreport-sendemail``.
+The render Lambda uses ``render_deck``; detecting requests and sending e-mails are the
+separate ZIP functions ``vw-autoreport-detect`` and ``vw-autoreport-sendemail``.
 
-* ``plan_decks``     (Lambda 1) recipients table -> list of ReportRequest
-* ``render_deck``    (Lambda 2) ReportRequest -> deck in S3 (the core of the system)
-* ``run_deck``       render one deck for local runs (no e-mail)
+* ``render_deck``    ReportRequest -> deck in S3 (the core of the system)
+* ``run_deck`` / ``steer_send_now_decks``  local runs (render only, no e-mail)
 * ``graph_steer_creation_process`` -- legacy per-template report (control tables +
   DQN Config Center, one slide per filter value)
 """
@@ -98,7 +97,7 @@ def _get_template_ids():
 
 @dataclasses.dataclass
 class RenderResult:
-    """Output of Lambda 2. The render Lambda adds the flat fields read by
+    """Result of ``render_deck``. The render Lambda turns it into the event read by
     functions/vw-autoreport-sendemail/lambda_function.py; keep both sides in sync."""
 
     status: str  # "rendered" | "failed"
@@ -118,7 +117,7 @@ class RenderResult:
 
 
 # ------------------------------------------------------------------------------ #
-# Lambda 1: plan
+# Local runs: recipient rows with send_now = 1
 # ------------------------------------------------------------------------------ #
 
 
@@ -128,9 +127,9 @@ def plan_decks(
     run_id: str | None = None,
     template: TemplateConfig | None = None,
 ) -> list[ReportRequest]:
-    """One ReportRequest per recipient row with ``send_now = 1``.
+    """One ReportRequest per recipient row with ``send_now = 1`` (local adhoc runs).
 
-    The flag is NOT cleared here; vw-autoreport-sendemail resets it after sending.
+    In AWS, vw-autoreport-detect finds these rows instead.
     """
     template = template or get_template_config(template_id)
     run_id = run_id or str(uuid.uuid4())
@@ -160,7 +159,7 @@ def plan_decks(
 
 
 # ------------------------------------------------------------------------------ #
-# Lambda 2: render
+# Render Lambda
 # ------------------------------------------------------------------------------ #
 
 
