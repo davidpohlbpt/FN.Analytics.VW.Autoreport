@@ -13,6 +13,9 @@ Raises on failure so that Step Functions catches it.
 from __future__ import annotations
 
 import logging
+import os
+
+import boto3
 
 from pptcreator.lambdas._bootstrap import log_start, normalise_event
 
@@ -26,26 +29,59 @@ class RenderFailed(RuntimeError):
 
 
 def handler(event, context):
-    event = normalise_event(event)
-    log_start(context, event)
+    request = None
+    try:
+        event = normalise_event(event)
+        log_start(context, event)
 
-    request = ReportRequest.from_event(event)
-    logging.info(
-        f"Rendering run {request.run_id}, recipient {request.recipient_ids}: {request.brand} "
-        f"{request.current_period} vs. {request.reference_period}."
-    )
+        request = ReportRequest.from_event(event)
+        logging.info(
+            f"Rendering run {request.run_id}, recipient {request.recipient_ids}: {request.brand} "
+            f"{request.current_period} vs. {request.reference_period}."
+        )
 
-    result = render_deck(request)
-    update_run_log(request, result)
+        result = render_deck(request)
+        if result.status != "rendered":
+            raise RenderFailed(result.error or "render failed")
+        update_run_log(request, result)
 
-    if result.status != "rendered":
-        logging.error(f"Render failed for recipient {request.recipient_ids}: {result.error}")
-        raise RenderFailed(result.error or "render failed")
+        logging.info(f"Rendered {result.file_name} ({result.slides} slides, {result.size_bytes} bytes) -> {result.s3_key}")
+        output = build_send_email_event(request, result)
+        logging.info(f"Handing s3://{output['bucket']}/{output['s3_key']} to vw-autoreport-sendemail for recipient id {output['recipient_id']}.")
+        return output
+    except Exception as exc:
+        logging.exception(f"Render invocation failed: {exc}")
+        error = str(exc)
+        if request is not None:
+            run_log.update_status(
+                request.run_id,
+                request.brand,
+                str(request.reference_period),
+                status="failed",
+                recipient_id=request.recipient_id,
+                error=error,
+            )
+            error = (
+                f"run_id={request.run_id}, recipient_id={request.recipient_id}, "
+                f"brand={request.brand}: {error}"
+            )
+        send_alert(os.environ.get("SNS_URL"), error)
+        raise
 
-    logging.info(f"Rendered {result.file_name} ({result.slides} slides, {result.size_bytes} bytes) -> {result.s3_key}")
-    output = build_send_email_event(request, result)
-    logging.info(f"Handing s3://{output['bucket']}/{output['s3_key']} to vw-autoreport-sendemail for recipient id {output['recipient_id']}.")
-    return output
+
+def send_alert(sns_url: str | None, error: str) -> None:
+    if not sns_url:
+        logging.info("SNS_URL not set; no render failure alert sent")
+        return
+    try:
+        response = boto3.client("sns").publish(
+            TopicArn=sns_url,
+            Subject="VW Autoreport render failed",
+            Message=error,
+        )
+        logging.info(f"Render failure alert sent, SNS MessageId: {response['MessageId']}")
+    except Exception:
+        logging.exception("Could not send render failure alert")
 
 
 def update_run_log(request: ReportRequest, result) -> None:

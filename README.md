@@ -219,6 +219,16 @@ to `tests/result/` for visual inspection.
 After changing dependencies: `poetry lock`, then `python deployment/export_requirements.py`.
 After a pycore update: see `vendor/README.md`.
 
+For render failure notifications, set `SNS_URL` on the render Lambda to the SNS
+topic ARN and grant its execution role `sns:Publish` on that topic. Add and confirm
+an email subscription to receive notifications. Catchable handler failures publish
+an alert and still raise the original error to Step Functions; SNS failures are
+logged without masking it. Once a request is parsed, failures also attempt to mark
+its run `failed` with the error. Invalid inputs before parsing cannot reliably
+identify a run row, but still trigger an alert. Database logging is best effort.
+Hard Lambda timeouts, out-of-memory termination and import/initialization errors
+are outside this handler; use AWS monitoring for those.
+
 Local image build and smoke test (Lambda Runtime Interface Emulator is part of the base image):
 
 ```powershell
