@@ -77,7 +77,7 @@ def lambda_handler(event, context):
         # Adjust database
         report_conn = get_pyodbc_connection(ssm_client, reportdb_param, time_out)
         try:
-            reset_recipientlist(report_conn, recipient_id)
+            reset_recipientlist(report_conn, recipient_id, sent=True)
             finish_run(report_conn, run_id, recipient_id, "sent")
         finally:
             report_conn.close()
@@ -135,17 +135,25 @@ def get_pyodbc_connection(
         raise
 
 
-def reset_recipientlist(report_conn: object, recipient_id: int) -> None:
+def reset_recipientlist(report_conn: object, recipient_id: int, sent: bool = False) -> None:
     """
     Resets send_now for the recipient row of this report.
+    After a successful send, last_report_time ("Letzter Versand") is set to German local time.
     """
+    if sent:
+        statement = (
+            "UPDATE [control].[T_Control_Autoreport_Recipients] "
+            "SET send_now = 0, last_report_time = CAST(SYSUTCDATETIME() AT TIME ZONE 'UTC' "
+            "AT TIME ZONE 'W. Europe Standard Time' AS DATETIME2) WHERE id = ?"
+        )
+    else:
+        statement = (
+            "UPDATE [control].[T_Control_Autoreport_Recipients] "
+            "SET send_now = 0 WHERE id = ? AND send_now = 1"
+        )
     try:
         cursor = report_conn.cursor()
-        cursor.execute(
-            f"UPDATE [control].[T_Control_Autoreport_Recipients] "
-            "SET send_now = 0 WHERE id = ? AND send_now = 1",
-            int(recipient_id),
-        )
+        cursor.execute(statement, int(recipient_id))
         report_conn.commit()
         cursor.close()
     except Exception as e:

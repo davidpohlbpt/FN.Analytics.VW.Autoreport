@@ -129,10 +129,9 @@ def test_render_event_sends_report_updates_database_and_deletes_report(handler):
     )
     assert "Audi &amp; &lt;Test&gt;" in html
     statements = state["connections"][0].statements
-    assert statements[0] == (
-        "UPDATE [control].[T_Control_Autoreport_Recipients] SET send_now = 0 WHERE id = ? AND send_now = 1",
-        7,
-    )
+    assert "SET send_now = 0, last_report_time = " in statements[0][0]
+    assert statements[0][0].endswith("WHERE id = ?")
+    assert statements[0][1] == 7
     assert "WHERE recipient_id = ? AND run_id = ?" in statements[1][0]
     assert statements[1][1] == ["sent", None, 7, "run-1"]
     assert state["connections"][0].closed
@@ -149,7 +148,8 @@ def test_send_failure_marks_run_failed_resets_send_now_and_keeps_report(handler)
 
     statements = state["connections"][0].statements
     assert len(statements) == 2
-    assert "T_Control_Autoreport_Recipients] SET send_now = 0" in statements[0][0]
+    assert "T_Control_Autoreport_Recipients] SET send_now = 0 WHERE" in statements[0][0]
+    assert "last_report_time" not in statements[0][0]
     assert "T_Control_Autoreport_Runs" in statements[1][0]
     assert statements[1][1][:2] == ["failed", "Graph down"]
     assert state["aws"].deleted == []
