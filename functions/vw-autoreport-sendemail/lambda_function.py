@@ -70,7 +70,7 @@ def lambda_handler(event, context):
                 dt.date.today().strftime("%d.%m.%Y"), html.escape(brand)
             ),
             event.get("email_subject")
-            or f"IDM Control Center Report für Einkaufsorganisation {brand}",
+            or f"BKM IDM Autoreport: Control Center {brand}",
         )
         print(f"LOG: Email sent successfully to {recipient}")
 

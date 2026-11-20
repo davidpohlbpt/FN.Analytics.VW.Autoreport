@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         storage.create_container(container)
     storage.write_blob(container_name=container, blob_name=template.name, blob_data=template.read_bytes())
 
-    name = safe_file_name(f"IDM_Control_Center_{args.brand}_{current_date}_vs_{reference_date}")
+    name = safe_file_name(f"BKM_IDM_Control_Center_{args.brand}_{current_date}_vs_{reference_date}")
     config = {
         "file": template.name,
         "file_container": container,

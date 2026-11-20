@@ -49,9 +49,11 @@ class Settings:
                                 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
 
                                     im Anhang findest du den automatisch erzeugten Report aus dem Control Center für die Einkaufsorganisation {}. <br>
-                                    Falls du dich für Reports von anderen Einkaufsorganisationen interessierst, wende dich an die
-                                    <a href="mailto:bkm.input.data.monitor.vwag.r.wob1@volkswagen.de">BKM IDM MailBox</a> oder 
-                                    <a href="mailto:matthias.runge@volkswagen.de">Matthias Runge</a>, um dich auf die Email-Liste setzen zu lassen. <br> <br>
+                                    Wenn Sie das BKM IDM Team kontaktieren möchten oder Unterstützung benötigen, erreichen Sie uns per E-Mail oder über unsere Group-Wiki-Seite.
+                                    <br> Technischer Support:
+                                    <a href="mailto:bkm.input.data.monitor.vwag.r.wob1@volkswagen.de">BKM IDM MailBox</a> oder
+                                    <a href="https://volkswagen-net.de/wikis/pages/viewpage.action?pageId=837027503">FAQ Wiki</a>
+                                    <br> <br>
 
                                     Weitere Details findest du auf der Seite des IDM.
                                     </p>

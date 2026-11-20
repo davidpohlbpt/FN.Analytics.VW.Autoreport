@@ -12,9 +12,9 @@ VALUES
     (N'IDM Control Center Weekly',
      N's3://<bucket>/templates/VW_Template_Overview.pptx',
      N'DE',
-     N'IDM_Control_Center_{brand}_{current}_vs_{reference}',
+     N'BKM_IDM_Control_Center_{brand}_{current}_vs_{reference}',
      N's3://<bucket>/reports',
-     N'IDM Control Center {brand}: {current} vs. {reference}',
+     N'BKM IDM Autoreport: Control Center {brand}: {current} vs. {reference}',
      1);
 SET @template_id = SCOPE_IDENTITY();
 
