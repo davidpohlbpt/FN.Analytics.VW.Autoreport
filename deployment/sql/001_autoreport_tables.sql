@@ -76,17 +76,12 @@ CREATE TABLE control.T_Control_Autoreport_Runs (
     id               INT IDENTITY(1,1) PRIMARY KEY,
     run_id           NVARCHAR(100)  NOT NULL,   -- one UUID per plan invocation
     template_id      INT            NOT NULL,
-    user_email       NVARCHAR(1000) NULL,       -- email of the recipient row
+    recipients       NVARCHAR(1000) NULL,       -- email snapshot; one recipient per deck
     recipient_id     INT            NULL,       -- T_Control_Autoreport_Recipients.id; open claim while 'processing'
     brand            NVARCHAR(200)  NOT NULL,
-    primary_date     NVARCHAR(30)   NULL,       -- current snapshot of the deck
-    reference_date   NVARCHAR(30)   NULL,       -- comparison snapshot of the deck
-    current_period   NVARCHAR(50)   NULL,       -- legacy column, older rows only
-    reference_period NVARCHAR(50)   NULL,       -- legacy column, older rows only
-    [trigger]        NVARCHAR(20)   NOT NULL,
+    current_period   NVARCHAR(50)   NULL,       -- requested report_week
+    reference_period NVARCHAR(50)   NULL,       -- requested comparison_week
     status           NVARCHAR(20)   NOT NULL,   -- processing | rendered | sent | skipped | failed
-    s3_key           NVARCHAR(1000) NULL,
-    message_id       NVARCHAR(200)  NULL,
     error            NVARCHAR(4000) NULL,
     created_at       DATETIME2      NULL,
     updated_at       DATETIME2      NULL

@@ -361,27 +361,20 @@ class AutoreportRuns(DeclarativeBase):
     """UUID shared by all decks of one planner invocation"""
 
     template_id: Mapped[int]
-    user_email: Mapped[str | None] = mapped_column(sa.String(1000))
-    """E-mail of the requesting recipient row"""
+    recipients: Mapped[str | None] = mapped_column(sa.String(1000))
+    """Email snapshot of the requesting recipient row (one recipient per deck)"""
     recipient_id: Mapped[int | None]
     """Row id in T_Control_Autoreport_Recipients; also the claim that prevents double sends"""
 
     brand: Mapped[str] = mapped_column(sa.String(200))
-    primary_date: Mapped[str | None] = mapped_column(sa.String(30))
-    reference_date: Mapped[str | None] = mapped_column(sa.String(30))
     current_period: Mapped[str | None] = mapped_column(sa.String(50))
-    """Legacy column, kept for older rows"""
+    """Requested report_week"""
     reference_period: Mapped[str | None] = mapped_column(sa.String(50))
-    """Legacy column, kept for older rows"""
-
-    trigger: Mapped[str] = mapped_column(sa.String(20))
-    """'adhoc' | 'manual'"""
+    """Requested comparison_week"""
 
     status: Mapped[str] = mapped_column(sa.String(20))
     """'processing' (claim) | 'rendered' | 'sent' | 'skipped' | 'failed'"""
 
-    s3_key: Mapped[str | None] = mapped_column(sa.String(1000))
-    message_id: Mapped[str | None] = mapped_column(sa.String(200))
     error: Mapped[str | None] = mapped_column(sa.String(4000))
 
     created_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)

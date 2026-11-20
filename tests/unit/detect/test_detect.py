@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import sqlite3
 import sys
 import types
 from pathlib import Path
@@ -129,9 +130,17 @@ def test_new_recipients_are_claimed_and_sent_to_the_state_machine(detect):
     # every item is valid render input
     assert [ReportRequest.from_event(item).recipient_id for item in payload["requests"]] == [42, 43]
 
+    insert_statements = [statement for statement, _ in state["connection"].statements if statement.startswith("INSERT")]
+    assert all(
+        "(run_id, template_id, recipients, recipient_id, brand, current_period, reference_period, status, created_at, updated_at)"
+        in statement
+        for statement in insert_statements
+    )
     inserts = [params for statement, params in state["connection"].statements if statement.startswith("INSERT")]
     assert [params[3] for params in inserts] == [42, 43]
     assert all(params[0] == run_id for params in inserts)
+    assert inserts[0][2] == "a@example.com"
+    assert inserts[0][5:] == ("V01-D (48/2025)", "V03-F (5/2025)")
     assert state["connection"].commits == 1
 
 
@@ -148,9 +157,43 @@ def test_identical_requests_in_one_poll_are_sent_once(detect):
     payload = json.loads(state["aws"].executions[0]["input"])
     assert [item["recipient_ids"] for item in payload["requests"]] == [[42], [44]]
     select = state["connection"].statements[0][0]
-    assert "LOWER(LTRIM(RTRIM(run.user_email))) = LOWER(LTRIM(RTRIM(r.email)))" in select
-    assert "run.primary_date = LTRIM(RTRIM(r.report_week))" in select
+    assert "LOWER(LTRIM(RTRIM(run.recipients))) = LOWER(LTRIM(RTRIM(r.email)))" in select
+    assert "run.current_period = LTRIM(RTRIM(r.report_week))" in select
+    assert "run.reference_period = LTRIM(RTRIM(r.comparison_week))" in select
     assert "run.recipient_id = r.id" not in select
+
+
+def test_processing_snapshot_blocks_duplicates_with_the_simplified_columns(detect):
+    module, _ = detect
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript("""
+            ATTACH DATABASE ':memory:' AS control;
+            CREATE TABLE control.T_Control_Autoreport_Templates (id INT, is_active INT);
+            CREATE TABLE control.T_Control_Autoreport_Brands
+                (id INT, filter_value TEXT, is_active INT);
+            CREATE TABLE control.T_Control_Autoreport_Recipients
+                (id INT, template_id INT, email TEXT, brand_id INT,
+                 report_week TEXT, comparison_week TEXT, send_now INT, IsDeleted INT);
+            CREATE TABLE control.T_Control_Autoreport_Runs
+                (recipient_id INT, recipients TEXT, brand TEXT,
+                 current_period TEXT, reference_period TEXT, status TEXT);
+            INSERT INTO control.T_Control_Autoreport_Templates VALUES (1, 1);
+            INSERT INTO control.T_Control_Autoreport_Brands VALUES (1, 'VW PKW', 1);
+            INSERT INTO control.T_Control_Autoreport_Recipients VALUES
+                (42, 1, ' a@example.com ', 1, ' KW45 ', ' KW37 ', 1, 0),
+                (43, 1, 'a@example.com', 1, 'KW45', 'KW38', 1, 0);
+            INSERT INTO control.T_Control_Autoreport_Runs VALUES
+                (99, 'A@example.com', 'VW PKW', 'KW45', 'KW37', 'processing');
+        """)
+
+        recipients = module.get_new_recipients(connection)
+        assert [recipient["id"] for recipient in recipients] == [43]
+
+        connection.execute(
+            "UPDATE control.T_Control_Autoreport_Runs SET status = 'sent'"
+        )
+        recipients = module.get_new_recipients(connection)
+        assert [recipient["id"] for recipient in recipients] == [42, 43]
 
 
 def test_state_machine_start_failure_marks_claims_failed(detect):

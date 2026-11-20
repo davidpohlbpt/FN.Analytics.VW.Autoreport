@@ -76,10 +76,10 @@ def get_new_recipients(report_conn: object) -> list[dict]:
               SELECT 1
               FROM control.T_Control_Autoreport_Runs run
               WHERE run.status = 'processing'
-                AND LOWER(LTRIM(RTRIM(run.user_email))) = LOWER(LTRIM(RTRIM(r.email)))
+                AND LOWER(LTRIM(RTRIM(run.recipients))) = LOWER(LTRIM(RTRIM(r.email)))
                 AND run.brand = b.filter_value
-                AND run.primary_date = LTRIM(RTRIM(r.report_week))
-                AND run.reference_date = LTRIM(RTRIM(r.comparison_week))
+                AND run.current_period = LTRIM(RTRIM(r.report_week))
+                AND run.reference_period = LTRIM(RTRIM(r.comparison_week))
           )
         ORDER BY r.id
         """)
@@ -133,9 +133,9 @@ def start_runs(report_conn: object, run_id: str, recipients: list[dict]) -> None
             cursor.execute(
                 """
                 INSERT INTO control.T_Control_Autoreport_Runs
-                    (run_id, template_id, user_email, recipient_id, brand,
-                     primary_date, reference_date, [trigger], status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'adhoc', 'processing', SYSUTCDATETIME(), SYSUTCDATETIME())
+                    (run_id, template_id, recipients, recipient_id, brand,
+                     current_period, reference_period, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', SYSUTCDATETIME(), SYSUTCDATETIME())
                 """,
                 (
                     run_id,

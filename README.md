@@ -72,7 +72,15 @@ that reads its column.
 | `T_Control_Autoreport_BrandFeatures` | per-brand feature switches | `brand_id` (FK Brands), `feature_key`, `feature_value` (`''` = explicitly off), `is_active`. **No active rows ⇒ feature off.** Supported key: `footnote_text` = text of the template's `{footnote}` token, so only that brand shows a footnote. Unknown keys are ignored with a warning |
 | `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_id` (FK Brands), `report_week` + `comparison_week` (**mandatory**; the dropdown string `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`; dates `2025-11-28` and `2025-KW46` are accepted too), `send_now`, `IsDeleted` (soft delete, never planned). The backend splits the run string and finds the snapshot by `LAUFKENNUNG` + `LAUF_KW` in `T_RESULT_Leitstand_Overview`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and weeks; two rows with the same brand and weeks write the same file name (later overwrites earlier) |
 | `dbo.V_Autoreport_DropdownValues` | frontend dropdowns (`006_dropdown_runs.sql`) | active brands; `report_week` = every run in `T_RESULT_Leitstand_Overview` as `LAUFKENNUNG (LAUF_KW)`, `comparison_week` = the same without the latest run, `sort_date` = the run's AnalyseZeitpunkt (the frontend sorts by it, newest first, through its data source config `T_CONTROL_Report_DataSourceColumns` (data source 9502, `OrderBy`/`OrderParameter`), also set by 006; a view cannot carry an order). Read live, so a new weekly load appears automatically; snapshots without `LAUFKENNUNG` are not offered. `T_Control_Autoreport_Weeks` is no longer used |
-| `T_Control_Autoreport_Runs` | audit log and the claim that prevents double sends | `run_id`, `template_id`, `user_email`, `recipient_id`, `brand`, `primary_date`, `reference_date`, `status` (`processing`/`rendered`/`sent`/`skipped`/`failed`), `s3_key`, `message_id`, `error` |
+| `T_Control_Autoreport_Runs` | audit log and the claim that prevents double sends | `run_id`, `template_id`, `recipients` (one email snapshot per deck), `recipient_id`, `brand`, `current_period` (`report_week`), `reference_period` (`comparison_week`), `status` (`processing`/`rendered`/`sent`/`skipped`/`failed`), `error`, `created_at`, `updated_at` |
+
+For existing databases, pause the detect poller and let running workflows finish before
+applying `deployment/sql/007_simplify_autoreport_runs.sql` and deploying the updated
+detect/render code; resume polling after both are updated. This is a one-time migration
+for the existing schema, not needed for fresh tables created by `001`. It preserves
+email and period snapshots, then drops the redundant runs-table columns `user_email`,
+`primary_date`, `reference_date`, `trigger`, `message_id`, and `s3_key`. The S3 key
+remains in the render/send workflow payload; recipient-table columns are unchanged.
 
 Data sources per KPI:
 
