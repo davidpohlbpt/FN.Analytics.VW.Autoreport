@@ -34,13 +34,11 @@ def lambda_handler(event, context):
 
             # Prepare output in format for state machine and trigger it
             state_machine_input = build_state_machine_input(run_id, recipients)
-            try:
-                execution_arn = start_state_machine(
-                    state_machine_arn, run_id, state_machine_input
-                )
-            except Exception as e:
-                fail_runs(report_conn, run_id, f"State machine start failed: {e}")
-                raise
+
+            execution_arn = start_state_machine(
+                state_machine_arn, run_id, state_machine_input
+            )
+
         finally:
             report_conn.close()
 
@@ -59,9 +57,26 @@ def lambda_handler(event, context):
 def get_new_recipients(report_conn: object) -> list[dict]:
     """
     send_now rows of active templates and brands. A request is skipped while an
-    identical one (email, brand, report_week, comparison_week) is still processing.
+    identical one (email, brand, report_week, comparison_week) is processing or rendered.
+    Resolve 'Aktuelle Woche' once for both the duplicate check and the render input.
     """
     cursor = report_conn.cursor()
+    cursor.execute("""
+        SELECT TOP(1) LAUFKENNUNG, LAUF_KW
+        FROM [ReportDB].[dbo].[T_RESULT_Leitstand_Overview]
+        WHERE AnalyseZeitpunkt = (
+            SELECT MAX(AnalyseZeitpunkt)
+            FROM [ReportDB].[dbo].[T_RESULT_Leitstand_Overview]
+        )
+        """)
+    row_data = cursor.fetchone()
+    latest_run = None
+    if row_data:
+        run = (row_data[0] or "").strip()
+        week = (row_data[1] or "").strip()
+        if run and week:
+            latest_run = f"{run} ({week})"
+
     cursor.execute("""
         SELECT r.id, r.template_id, r.email, b.filter_value AS brand,
                r.report_week, r.comparison_week
@@ -75,14 +90,17 @@ def get_new_recipients(report_conn: object) -> list[dict]:
           AND NOT EXISTS (
               SELECT 1
               FROM control.T_Control_Autoreport_Runs run
-              WHERE run.status = 'processing'
+              WHERE run.status IN ('processing', 'rendered')
                 AND LOWER(LTRIM(RTRIM(run.recipients))) = LOWER(LTRIM(RTRIM(r.email)))
                 AND run.brand = b.filter_value
-                AND run.current_period = LTRIM(RTRIM(r.report_week))
+                AND run.current_period = CASE
+                    WHEN LTRIM(RTRIM(r.report_week)) = 'Aktuelle Woche' THEN ?
+                    ELSE LTRIM(RTRIM(r.report_week))
+                END
                 AND run.reference_period = LTRIM(RTRIM(r.comparison_week))
           )
         ORDER BY r.id
-        """)
+        """, (latest_run,))
     columns = [column[0] for column in cursor.description]
     rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
     cursor.close()
@@ -92,6 +110,10 @@ def get_new_recipients(report_conn: object) -> list[dict]:
     for row in rows:
         email = (row["email"] or "").strip()
         report_week = (row["report_week"] or "").strip()
+        if report_week == "Aktuelle Woche":
+            if latest_run is None:
+                raise ValueError("No valid latest snapshot available for Aktuelle Woche.")
+            report_week = latest_run
         comparison_week = (row["comparison_week"] or "").strip()
         if (
             not email
@@ -191,24 +213,6 @@ def start_state_machine(
     )
     print(f"LOG: Started state machine execution {response['executionArn']}")
     return response["executionArn"]
-
-
-def fail_runs(report_conn: object, run_id: str, error: str) -> None:
-    """
-    Closes the claims of this run; send_now stays 1, so the next poll retries.
-    """
-    cursor = report_conn.cursor()
-    cursor.execute(
-        """
-        UPDATE control.T_Control_Autoreport_Runs
-        SET status = 'failed', error = ?, updated_at = SYSUTCDATETIME()
-        WHERE run_id = ? AND status = 'processing'
-        """,
-        (error[:4000], run_id),
-    )
-    report_conn.commit()
-    cursor.close()
-    print(f"LOG: Marked run {run_id} as failed")
 
 
 def get_pyodbc_connection(

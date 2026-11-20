@@ -24,6 +24,9 @@ class FakeCursor:
     def fetchall(self):
         return self.connection.rows
 
+    def fetchone(self):
+        return self.connection.latest_snapshot
+
     def close(self):
         pass
 
@@ -35,6 +38,7 @@ class FakeConnection:
         self.commits = 0
         self.rollbacks = 0
         self.closed = False
+        self.latest_snapshot = (" V01-D ", "48/2025 ")
 
     def cursor(self):
         return FakeCursor(self)
@@ -69,6 +73,27 @@ class FakeAws:
         return {"MessageId": "alert-1"}
 
 
+class SqliteCursorWithLatestSnapshot:
+    def __init__(self, connection):
+        self.cursor = connection.cursor()
+        self.description = None
+
+    def execute(self, statement, params=None):
+        self.latest_lookup = "SELECT TOP(1)" in statement
+        if not self.latest_lookup:
+            self.cursor.execute(statement, params or ())
+            self.description = self.cursor.description
+
+    def fetchone(self):
+        return ("V01-D", "48/2025")
+
+    def fetchall(self):
+        return self.cursor.fetchall()
+
+    def close(self):
+        self.cursor.close()
+
+
 @pytest.fixture
 def detect(monkeypatch):
     monkeypatch.setitem(sys.modules, "pyodbc", types.SimpleNamespace(connect=None))
@@ -95,7 +120,7 @@ def test_no_new_recipients_does_nothing(detect):
     out = module.lambda_handler({}, None)
 
     assert out == {"statusCode": 200, "body": "No report request found"}
-    assert len(state["connection"].statements) == 1  # only the SELECT
+    assert len(state["connection"].statements) == 2  # latest snapshot and recipients
     assert state["aws"].executions == []
     assert state["connection"].closed
 
@@ -156,14 +181,15 @@ def test_identical_requests_in_one_poll_are_sent_once(detect):
 
     payload = json.loads(state["aws"].executions[0]["input"])
     assert [item["recipient_ids"] for item in payload["requests"]] == [[42], [44]]
-    select = state["connection"].statements[0][0]
+    select = state["connection"].statements[1][0]
     assert "LOWER(LTRIM(RTRIM(run.recipients))) = LOWER(LTRIM(RTRIM(r.email)))" in select
-    assert "run.current_period = LTRIM(RTRIM(r.report_week))" in select
+    assert "ELSE LTRIM(RTRIM(r.report_week))" in select
     assert "run.reference_period = LTRIM(RTRIM(r.comparison_week))" in select
     assert "run.recipient_id = r.id" not in select
 
 
-def test_processing_snapshot_blocks_duplicates_with_the_simplified_columns(detect):
+@pytest.mark.parametrize("status", ["processing", "rendered"])
+def test_processing_snapshot_blocks_duplicates_with_the_simplified_columns(detect, status):
     module, _ = detect
     with sqlite3.connect(":memory:") as connection:
         connection.executescript("""
@@ -180,20 +206,61 @@ def test_processing_snapshot_blocks_duplicates_with_the_simplified_columns(detec
             INSERT INTO control.T_Control_Autoreport_Templates VALUES (1, 1);
             INSERT INTO control.T_Control_Autoreport_Brands VALUES (1, 'VW PKW', 1);
             INSERT INTO control.T_Control_Autoreport_Recipients VALUES
-                (42, 1, ' a@example.com ', 1, ' KW45 ', ' KW37 ', 1, 0),
-                (43, 1, 'a@example.com', 1, 'KW45', 'KW38', 1, 0);
+                (42, 1, ' a@example.com ', 1, ' Aktuelle Woche ', ' KW37 ', 1, 0),
+                (43, 1, 'a@example.com', 1, 'V01-D (48/2025)', 'KW38', 1, 0);
             INSERT INTO control.T_Control_Autoreport_Runs VALUES
-                (99, 'A@example.com', 'VW PKW', 'KW45', 'KW37', 'processing');
+                (99, 'A@example.com', 'VW PKW', 'V01-D (48/2025)', 'KW37', 'processing');
         """)
+        connection.execute(
+            "UPDATE control.T_Control_Autoreport_Runs SET status = ?", (status,)
+        )
+        report_conn = types.SimpleNamespace(
+            cursor=lambda: SqliteCursorWithLatestSnapshot(connection)
+        )
 
-        recipients = module.get_new_recipients(connection)
+        recipients = module.get_new_recipients(report_conn)
         assert [recipient["id"] for recipient in recipients] == [43]
 
         connection.execute(
             "UPDATE control.T_Control_Autoreport_Runs SET status = 'sent'"
         )
-        recipients = module.get_new_recipients(connection)
+        recipients = module.get_new_recipients(report_conn)
         assert [recipient["id"] for recipient in recipients] == [42, 43]
+
+
+def test_current_week_uses_one_resolution_for_sql_claims_and_payload(detect):
+    module, state = detect
+    state["connection"] = FakeConnection([
+        _row(42, report_week="Aktuelle Woche"),
+        _row(43),
+        _row(44, email="b@example.com", report_week="Aktuelle Woche"),
+    ])
+
+    module.lambda_handler({}, None)
+
+    statements = state["connection"].statements
+    assert sum("SELECT TOP(1)" in statement for statement, _ in statements) == 1
+    assert statements[1][1] == ("V01-D (48/2025)",)
+    inserts = [params for statement, params in statements if statement.startswith("INSERT")]
+    assert [params[3] for params in inserts] == [42, 44]
+    assert all(params[5] == "V01-D (48/2025)" for params in inserts)
+    payload = json.loads(state["aws"].executions[0]["input"])
+    assert all(request["current_period"] == "V01-D (48/2025)" for request in payload["requests"])
+    assert state["connection"].rows[0][4] == "Aktuelle Woche"
+
+
+@pytest.mark.parametrize("snapshot", [None, (None, None), (" ", "48/2025")])
+def test_current_week_without_valid_snapshot_fails_before_claiming(detect, snapshot):
+    module, state = detect
+    state["connection"] = FakeConnection([_row(42, report_week="Aktuelle Woche")])
+    state["connection"].latest_snapshot = snapshot
+
+    with pytest.raises(ValueError, match="No valid latest snapshot"):
+        module.lambda_handler({}, None)
+
+    assert state["connection"].commits == 0
+    assert state["aws"].executions == []
+    assert state["connection"].closed
 
 
 def test_state_machine_start_failure_marks_claims_failed(detect):
