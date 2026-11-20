@@ -140,7 +140,7 @@ def test_render_event_sends_report_updates_database_and_deletes_report(handler):
     assert state["aws"].deleted == [(BUCKET, KEY)]
 
 
-def test_send_failure_marks_run_failed_and_keeps_send_now_and_report(handler):
+def test_send_failure_marks_run_failed_resets_send_now_and_keeps_report(handler):
     module, state = handler
     state["send_error"] = RuntimeError("Graph down")
 
@@ -148,8 +148,10 @@ def test_send_failure_marks_run_failed_and_keeps_send_now_and_report(handler):
         module.lambda_handler(_event(), None)
 
     statements = state["connections"][0].statements
-    assert len(statements) == 1 and "T_Control_Autoreport_Runs" in statements[0][0]
-    assert statements[0][1][:2] == ["failed", "Graph down"]
+    assert len(statements) == 2
+    assert "T_Control_Autoreport_Recipients] SET send_now = 0" in statements[0][0]
+    assert "T_Control_Autoreport_Runs" in statements[1][0]
+    assert statements[1][1][:2] == ["failed", "Graph down"]
     assert state["aws"].deleted == []
 
 

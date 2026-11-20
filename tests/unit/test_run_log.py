@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 import sqlalchemy as sa
 
-from pptcreator.models.models import AutoreportRuns
+from pptcreator.models.models import AutoreportRecipients, AutoreportRuns
 from pptcreator.utils import run_log
 
 
@@ -52,6 +52,34 @@ def test_status_update_uses_the_simplified_runs_schema(runs_engine, recipient_id
     assert rows[0]["recipients"] == "a@example.com"
     assert rows[0]["current_period"] == "KW45"
     assert rows[0]["reference_period"] == "KW37"
+
+
+def test_status_update_leaves_older_runs_of_the_recipient_untouched(runs_engine):
+    table = AutoreportRuns.__table__
+    with runs_engine.begin() as connection:
+        connection.execute(
+            table.insert(),
+            {
+                "run_id": "run-0",
+                "template_id": 1,
+                "recipients": "a@example.com",
+                "recipient_id": 42,
+                "brand": "Audi",
+                "current_period": "KW44",
+                "reference_period": "KW37",
+                "status": "sent",
+            },
+        )
+
+    run_log.update_status("run-1", "Audi", "KW37", status="rendered", recipient_id=42)
+
+    with runs_engine.connect() as connection:
+        statuses = dict(
+            connection.execute(
+                sa.select(table.c.run_id, table.c.status).where(table.c.recipient_id == 42)
+            ).all()
+        )
+    assert statuses == {"run-0": "sent", "run-1": "rendered"}
 
 
 def test_render_updates_run_without_persisting_the_s3_key(runs_engine):
@@ -147,6 +175,33 @@ def test_render_failure_alert_preserves_error_and_updates_claim(
         assert rows == [("processing", None), ("processing", None)]
     else:
         assert rows == [("failed", "broken deck"), ("processing", None)]
+
+
+def test_render_failure_resets_send_now(runs_engine, render_event, monkeypatch):
+    from pptcreator.lambdas import render
+
+    recipients = AutoreportRecipients.__table__
+    recipients.create(runs_engine)
+    with runs_engine.begin() as connection:
+        connection.execute(
+            recipients.insert(),
+            [
+                {"id": recipient_id, "template_id": 1, "email": "a@example.com", "brand_id": 1,
+                 "report_week": "KW45", "comparison_week": "KW37", "send_now": True}
+                for recipient_id in (42, 43)
+            ],
+        )
+    monkeypatch.setattr(
+        render, "render_deck", Mock(return_value=SimpleNamespace(status="failed", error="broken deck"))
+    )
+    monkeypatch.delenv("SNS_URL", raising=False)
+
+    with pytest.raises(render.RenderFailed):
+        render.handler(render_event, None)
+
+    with runs_engine.connect() as connection:
+        send_now = dict(connection.execute(sa.select(recipients.c.id, recipients.c.send_now)).all())
+    assert send_now == {42: False, 43: True}
 
 
 def test_render_failure_without_sns_url_still_updates_the_run(

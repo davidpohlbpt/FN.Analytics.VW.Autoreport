@@ -194,12 +194,14 @@ def mark_run_failed(
     recipient_id: int | None,
     error: str,
 ) -> None:
-    # Best effort: the original error is raised by the caller
+    # Best effort: the original error is raised by the caller.
+    # send_now is reset so the next detect poll does not pick up the failed request again.
     if recipient_id is None:
         return
     try:
         report_conn = get_pyodbc_connection(ssm_client, reportdb_param, time_out)
         try:
+            reset_recipientlist(report_conn, recipient_id)
             finish_run(report_conn, run_id, recipient_id, "failed", error)
         finally:
             report_conn.close()

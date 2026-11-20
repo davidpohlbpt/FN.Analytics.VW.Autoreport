@@ -53,6 +53,7 @@ def handler(event, context):
         logging.exception(f"Render invocation failed: {exc}")
         error = str(exc)
         if request is not None:
+            run_log.reset_send_now(request.recipient_id)
             run_log.update_status(
                 request.run_id,
                 request.brand,
