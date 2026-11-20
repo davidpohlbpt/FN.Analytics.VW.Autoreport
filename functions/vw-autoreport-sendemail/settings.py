@@ -45,6 +45,8 @@ class Settings:
                                 im Anhang findest du den automatisch erstellten Report aus dem IDM Control Center für die Einkaufsorganisation {1}.
                                 <br> <br>
                                 Weitere Informationen und Details findest du direkt im IDM Control Center.
+                                Die Report-Einstellungen, wie Einkaufsorganisation und Betrachtungszeiträume, lassen sich
+                                eigenständig im BKM IDM anpassen.
                             </td>
                         </tr>
                         <tr>
