@@ -1,6 +1,6 @@
 """KPI data from the DQN frontend chart API (``source = 'frontend'``).
 
-Uses the same endpoints and payloads as the legacy ``get_config_center_config``:
+Uses the DQN endpoints in ``pptcreator.configs.endpoints``:
 the chart's ``ReportDataSourceID`` from the tile list, the fill colours from the
 chart aesthetics, and ``ReportContent/chart`` with mask filters for the data rows.
 

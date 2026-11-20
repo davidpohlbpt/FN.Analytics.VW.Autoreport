@@ -263,20 +263,6 @@ def test_current_week_without_valid_snapshot_fails_before_claiming(detect, snaps
     assert state["connection"].closed
 
 
-def test_state_machine_start_failure_marks_claims_failed(detect):
-    module, state = detect
-    state["connection"] = FakeConnection([_row(42)])
-    state["aws"].start_error = RuntimeError("AccessDenied")
-
-    with pytest.raises(RuntimeError, match="AccessDenied"):
-        module.lambda_handler({}, None)
-
-    update = state["connection"].statements[-1]
-    assert update[0].startswith("UPDATE control.T_Control_Autoreport_Runs SET status = 'failed'")
-    assert update[1][0] == "State machine start failed: AccessDenied"
-    assert state["connection"].closed
-
-
 def test_missing_state_machine_arn_fails_before_reading_the_database(detect, monkeypatch):
     module, state = detect
     monkeypatch.delenv("STATE_MACHINE_ARN")

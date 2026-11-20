@@ -51,9 +51,6 @@ render_deck(request)
   - s3_sync.upload_output      (-> target_location of the template, or the default bucket)
 ```
 
-The legacy per-template pipeline (`graph_steer_creation_process`, `T_CONTROL_PptCreator_*`,
-Config Center) is still present and used by the older tests.
-
 ## Control tables (ReportDB, schema `control`)
 
 DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`,

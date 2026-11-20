@@ -1,7 +1,6 @@
 """Reads the T_Control_Autoreport_* tables into typed configuration objects.
 
-Counterpart of ``get_database_config`` (legacy control tables). Nothing here touches
-S3, the DQN API or the template file; it only turns table rows into
+Nothing here touches S3, the DQN API or the template file; it only turns table rows into
 ``TemplateConfig`` / ``KpiDefinition`` / recipient groups so the rest of the pipeline
 is independent of the storage layout of ReportDB.
 """
@@ -9,7 +8,6 @@ is independent of the storage layout of ReportDB.
 from __future__ import annotations
 
 import dataclasses
-import datetime as dt
 import json
 import logging
 from urllib.parse import urlparse

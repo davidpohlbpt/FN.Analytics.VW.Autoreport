@@ -1,7 +1,7 @@
 """Moves files between S3 and pycore's storage.
 
 pycore storage is the single storage abstraction used by the rendering code
-(``get_presentation``, ``graph_create_ppt``, ``send_email``). In Lambda it is a
+(``get_presentation``, ``graph_create_ppt``). In Lambda it is a
 FileStorage under ``/tmp`` and is ephemeral, so the template is pulled from S3 before
 rendering and the finished deck is pushed back afterwards. With ``s3_enabled=False``
 (local runs, unit tests) both steps are no-ops and the files simply stay in storage.

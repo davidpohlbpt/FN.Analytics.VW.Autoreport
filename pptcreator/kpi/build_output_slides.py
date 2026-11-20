@@ -14,11 +14,15 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING
 
 from pptx import Presentation
 
 from pptcreator.kpi.base import KpiResult, KpiSnapshot, ReportPeriod, Rows
 from pptcreator.models.enum import ChartObjects, ChartType
+
+if TYPE_CHECKING:
+    from pptcreator.kpi.brand_policy import BrandPolicy
 
 OVERVIEW_SLIDE = 0
 DETAIL_SLIDE = 1
@@ -322,7 +326,3 @@ def _commodity_headline(
         [(f"{commodity} {current_value}", "first")],
         [(f"{_week(ref.period, short=True)}: {reference_value}", "first")],
     ]
-
-
-def describe_periods(current: ReportPeriod, reference: ReportPeriod) -> str:
-    return f"{current} vs. {reference}"

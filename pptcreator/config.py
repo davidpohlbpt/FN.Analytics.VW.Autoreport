@@ -13,9 +13,6 @@ from pydantic_settings import BaseSettings
 class CreatorSettings(BaseSettings):
 
     # ------------------------------- Database -------------------------------- #
-    app_db_schema: str = "control"
-    """Schema of the control tables (legacy templates/mappings/recipients)."""
-
     autoreport_schema: str = "control"
     """Schema of the T_Control_Autoreport_* tables in ReportDB."""
 
