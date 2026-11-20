@@ -28,7 +28,7 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 12px 0 8px 0; font-size:16px; line-height:18px; font-family:Calibri, sans-serif; color:#003366; border-bottom: 2px solid #003366;">
-                                <strong>Control Center &ndash; Automatischer Report vom {0}</strong>
+                                <strong>Control Center – Automatischer Report vom {0}</strong>
                             </td>
                         </tr>
                         <tr>
@@ -42,7 +42,7 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 10px 0 10px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                im Anhang findest du den automatisch erstellten Report aus dem IDM Control Center f&uuml;r die Einkaufsorganisation {1}.
+                                im Anhang findest du den automatisch erstellten Report aus dem IDM Control Center für die Einkaufsorganisation {1}.
                                 <br> <br>
                                 Weitere Informationen und Details findest du direkt im IDM Control Center.
                             </td>
@@ -63,7 +63,7 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 10px 0 10px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                Bei Fragen oder Unterst&uuml;tzungsbedarf erreichst du das BKM IDM Team per E-Mail oder &uuml;ber unsere Wiki-Seite:
+                                Bei Fragen oder Unterstützungsbedarf erreichst du das BKM IDM Team per E-Mail oder über unsere Wiki-Seite:
                                 <br> <br>
                                 <strong>Support:</strong>
                                 <a href="mailto:bkm.input.data.monitor.vwag.r.wob1@volkswagen.de">BKM IDM MailBox</a> |
@@ -87,13 +87,14 @@ class Settings:
                             </td>
                         </tr>
                         <tr>
-                            <td style="font-size:9px;line-height:14px;text-align:left;font-family:Calibri, sans-serif;"> The
-                                information in this email is confidential and may be legally privileged. If you are not the
-                                intended recipient of this message, any review, disclosure, copying, distribution,
-                                retention, or any action taken or omitted to be taken in reliance on it is prohibited and
-                                may be unlawful. If you are not the intended recipient, please reply to or forward a copy of
-                                this message to the sender and delete the message, any attachments, and any copies thereof
-                                from your system.
+                            <td style="font-size:9px;line-height:14px;text-align:left;font-family:Calibri, sans-serif;">
+                                Die Informationen in dieser E-Mail sind vertraulich und können rechtlich geschützt sein.
+                                Wenn du nicht der beabsichtigte Empfänger dieser Nachricht bist, ist jede Überprüfung,
+                                Offenlegung, Vervielfältigung, Weitergabe oder Aufbewahrung sowie jede Handlung oder
+                                Unterlassung im Vertrauen auf ihren Inhalt untersagt und kann rechtswidrig sein. Wenn du nicht
+                                der beabsichtigte Empfänger bist, antworte bitte dem Absender oder leite ihm eine Kopie
+                                dieser Nachricht weiter und lösche die Nachricht, alle Anhänge und alle Kopien davon
+                                aus deinem System.
 
                             </td>
                         </tr>
