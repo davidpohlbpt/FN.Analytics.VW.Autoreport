@@ -1,6 +1,6 @@
 class Settings:
 
-    # {0} = date, {1} = Einkaufsorganisation (HTML-escaped by lambda_function.py)
+    # {0} = date (dd.mm.yyyy), {1} = Einkaufsorganisation (HTML-escaped by lambda_function.py)
     email_html = """
     <!DOCTYPE html
         PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -28,9 +28,8 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 12px 0 8px 0; font-size:16px; line-height:18px; font-family:Calibri, sans-serif; color:#003366; border-bottom: 2px solid #003366;">
-                                <strong>Control Center - Auto Report für {} </strong>
+                                <strong>Control Center &ndash; Automatischer Report vom {0}</strong>
                             </td>
-
                         </tr>
                         <tr>
                             <td
@@ -43,26 +42,9 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 10px 0 10px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                <!DOCTYPE html>
-                                <html lang="de">
-
-                                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-
-                                    im Anhang findest du den automatisch erzeugten Report aus dem Control Center für die Einkaufsorganisation {}. <br>
-                                    Wenn Sie das BKM IDM Team kontaktieren möchten oder Unterstützung benötigen, erreichen Sie uns per E-Mail oder über unsere Group-Wiki-Seite.
-                                    <br> Technischer Support:
-                                    <a href="mailto:bkm.input.data.monitor.vwag.r.wob1@volkswagen.de">BKM IDM MailBox</a> oder
-                                    <a href="https://volkswagen-net.de/wikis/pages/viewpage.action?pageId=837027503">FAQ Wiki</a>
-                                    <br> <br>
-
-                                    Weitere Details findest du auf der Seite des IDM.
-                                    </p>
-
-                                </body>
-
-                                </html>
-
-
+                                im Anhang findest du den automatisch erstellten Report aus dem IDM Control Center f&uuml;r die Einkaufsorganisation {1}.
+                                <br> <br>
+                                Weitere Informationen und Details findest du direkt im IDM Control Center.
                             </td>
                         </tr>
                         <tr>
@@ -72,9 +54,7 @@ class Settings:
                                         <td
                                             style="text-align:center;background-color: #94d523;border-color: #94d523;border: 2px solid #94d523;padding: 15px;border-radius: 10px;">
                                             <a style="display: block;color: white;font-size: 12px;text-decoration: none;"
-                                                href="https://dqn.bkm.prd.eu.pp.cloud.vwgroup.com/data-quality/genericreport/1200"> Zum IDM Control Center
-
-                                            </a>
+                                                href="https://dqn.bkm.prd.eu.pp.cloud.vwgroup.com/data-quality/genericreport/1200">Zum IDM Control Center</a>
                                         </td>
                                     </tr>
                                 </table>
@@ -83,14 +63,13 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 10px 0 10px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                <br> NOTE: This email notification was generated automatically. Responses to automatically
-                                generated emails will not be processed. If you would like to contact the BKM IDM team or you
-                                need assistance, you can contact us by email or via our Group Wiki website.
-                                <br> Technical Support:
-                                <a href="mailto:bkm.input.data.monitor.vwag.r.wob1@volkswagen.de">BKM IDM MailBox</a> or
-                                <a href="https://volkswagen-net.de/wikis/pages/viewpage.action?pageId=837027503">FAQ Wiki
-
-                                </a>
+                                Bei Fragen oder Unterst&uuml;tzungsbedarf erreichst du das BKM IDM Team per E-Mail oder &uuml;ber unsere Wiki-Seite:
+                                <br> <br>
+                                <strong>Support:</strong>
+                                <a href="mailto:bkm.input.data.monitor.vwag.r.wob1@volkswagen.de">BKM IDM MailBox</a> |
+                                <a href="https://volkswagen-net.de/wikis/pages/viewpage.action?pageId=837027503">FAQ Wiki</a>
+                                <br> <br>
+                                <strong>Hinweis:</strong> Diese E-Mail wurde automatisch erstellt. Antworten auf diese E-Mail werden nicht bearbeitet.
                             </td>
                         </tr>
                         <tr>
@@ -121,9 +100,6 @@ class Settings:
                     </table>
                 </td>
             </tr>
-        </table>
-        </td>
-        </tr>
         </table>
     </body>
 
