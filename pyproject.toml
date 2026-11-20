@@ -5,8 +5,6 @@ description = "Automated PowerPoint KPI reporting for VW, running as an AWS Lamb
 authors = ["Factory Navigator"]
 packages = [
     { include = "pptcreator" },
-    # Send Lambda, deployed as its own ZIP; included here for local all-in-one runs
-    { include = "sender", from = "functions/send" },
 ]
 
 [tool.poetry.scripts]
@@ -51,7 +49,7 @@ black = "^26.1.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [".", "functions/send"]
+pythonpath = ["."]
 addopts = "-p no:cacheprovider"
 
 [build-system]

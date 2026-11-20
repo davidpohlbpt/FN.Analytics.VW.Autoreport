@@ -66,9 +66,6 @@ KAPAZITAET_PALETTE = {
     "Keine Einträge": "rgb(128, 128, 128)",
 }
 
-# Backwards compatible name used by older tests
-BKA_AGE_PALETTE = AKTUALISIERUNG_PALETTE
-
 
 def _kpi(order, key, name, title, subtitle, palette, chart_id, tile_id, average_label=None) -> KpiDefinition:
     return KpiDefinition(

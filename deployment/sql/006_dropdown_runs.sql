@@ -66,7 +66,14 @@ FROM labelled l
 UNION ALL
 SELECT NULL, NULL, l.run_label, CAST(0 AS bit), CAST(l.AnalyseZeitpunkt AS date)
 FROM labelled l
-WHERE l.is_latest = 0;
+WHERE l.is_latest = 0
+UNION ALL
+SELECT
+    NULL AS brand_name,
+    CAST(N'Aktuelle Woche' AS nvarchar(50)) AS report_week,
+    NULL AS comparison_week,
+    CAST(0 AS bit) AS IsDeleted,
+    CAST(NULL AS date) AS sort_date;
 GO
 
 -- ------------------------ Frontend sort configuration ---------------------- #

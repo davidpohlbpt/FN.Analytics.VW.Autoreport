@@ -6,8 +6,8 @@
 Unlike ``pptcreator.preview`` (hard-coded KPI registry) this uses the real pipeline:
 ``T_Control_Autoreport_Templates`` + ``Mappings`` -> KPI definitions and template file,
 ``Brands`` + ``Recipients`` -> one deck per (brand, reference week). Renders through
-``render_deck`` and copies the .pptx into ``previews/``. S3 and e-mail are disabled by
-``.env`` (``s3_enabled`` / ``mail_enabled`` = false), so nothing leaves the machine.
+``render_deck`` and copies the .pptx into ``previews/``. S3 is disabled by ``.env``
+(``s3_enabled`` = false) and local runs never send e-mail, so nothing leaves the machine.
 
 The reference week comes from the recipient row. If that week has no Control Center
 snapshot, the snapshot before the current one is used and logged.

@@ -13,23 +13,11 @@ from pydantic_settings import BaseSettings
 class CreatorSettings(BaseSettings):
 
     # ------------------------------- Database -------------------------------- #
-    app_db_schema: str = "control"
-    """Schema of the control tables (legacy templates/mappings/recipients)."""
-
     autoreport_schema: str = "control"
     """Schema of the T_Control_Autoreport_* tables in ReportDB."""
 
     default_template_id: int | None = None
     """Template used when an event does not name one; None -> the only active template."""
-
-    plan_template_ids: str | None = None
-    """Templates planned per run by the plan Lambda: comma-separated ids (``1,3``) or
-    ``all``. Empty -> ``default_template_id``, else all active templates. A
-    ``template_id`` / ``template_ids`` in the event takes precedence."""
-
-    state_machine_arn: str | None = None
-    """STATE_MACHINE_ARN: the plan Lambda starts this Step Function (render -> send ->
-    record), only when there is something to send. Empty -> plan only returns its output."""
 
     # ------------------------------- Storage --------------------------------- #
     storage_container: str = "ppt_creator"
@@ -51,7 +39,7 @@ class CreatorSettings(BaseSettings):
     overriding ``target_location`` of the template row."""
 
     # ---------------------------------- AWS ----------------------------------- #
-    # Mail settings (MAIL_ENABLED, SES_*) belong to the send Lambda: functions/send/sender/config.py
+    # E-mail settings belong to the send Lambda: functions/vw-autoreport-sendemail
 
     aws_region: str | None = Field(default=None, validation_alias="AWS_REGION_NAME")
     """Region for boto3 clients. Read from ``AWS_REGION_NAME`` because ``AWS_REGION`` is a

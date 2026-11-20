@@ -1,14 +1,11 @@
 """Local CLI, all-in-one handler and backwards compatible Lambda entry points.
 
-The state machine Lambdas from the render image live in ``pptcreator.lambdas``:
+The render Lambda lives in ``pptcreator.lambdas.render.handler`` (alias
+``render_handler``). Requests are detected by the separate ZIP function
+``functions/vw-autoreport-detect.py``; e-mails are sent by
+``functions/vw-autoreport-sendemail``.
 
-``pptcreator.lambdas.plan.handler``    Lambda 1  (alias ``plan_handler``)
-``pptcreator.lambdas.render.handler``  Lambda 2  (alias ``render_handler``)
-``pptcreator.lambdas.record.handler``  Lambda 4  (alias ``record_handler``)
-
-Lambda 3 (send) is the separate ZIP package ``functions/send/sender``.
-
-``handler``  (all-in-one, for local runs; needs the sender package on the path)
+``handler``  (all-in-one, for local runs; renders only, no e-mail)
     in:  {"mode": "adhoc" | "manual", ...}   adhoc (default): every row with send_now = 1
     out: summary with one entry per deck
 """
@@ -29,9 +26,6 @@ from pptcreator.creator.graph_steer_creation_process import (  # noqa: E402
     steer_send_now_decks,
 )
 from pptcreator.kpi.base import KpiSource  # noqa: E402
-from pptcreator.lambdas.plan import PlanFailed  # noqa: E402,F401
-from pptcreator.lambdas.plan import handler as plan_handler  # noqa: E402,F401
-from pptcreator.lambdas.record import handler as record_handler  # noqa: E402,F401
 from pptcreator.lambdas.render import RenderFailed  # noqa: E402,F401
 from pptcreator.lambdas.render import handler as render_handler  # noqa: E402
 
@@ -111,7 +105,7 @@ def cli(argv: list[str] | None = None) -> int:
     manual.add_argument("--recipient", action="append", default=[], help="Recipient e-mail (repeatable)")
     manual.add_argument("--kpi", action="append", default=[], help="KPI key subset (repeatable)")
 
-    adhoc = commands.add_parser("adhoc", help="Render and send every recipient row with send_now = 1")
+    adhoc = commands.add_parser("adhoc", help="Render every recipient row with send_now = 1")
     adhoc.add_argument("--template-id", type=int, default=None, help="Template id; default: the only active one")
 
     render = commands.add_parser("render", help="Render the ReportRequest stored in a JSON file")

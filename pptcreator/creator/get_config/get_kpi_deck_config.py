@@ -1,9 +1,7 @@
 """Builds the ``config_dict`` for a KPI deck (one brand, current vs. reference period).
 
-Counterpart of ``graph_get_config`` for the legacy per-filter report: instead of the
-legacy control tables and the Config Center, the data comes from a ``KpiSource`` and
-the slide layout from ``build_output_slides``. The result goes straight into
-``graph_create_ppt`` and ``send_email``.
+The data comes from a ``KpiSource`` and the slide layout from ``build_output_slides``.
+The result goes straight into ``graph_create_ppt``.
 """
 
 from __future__ import annotations
@@ -109,18 +107,9 @@ class ReportRequest:
         }
 
     @property
-    def group_key(self) -> tuple[str, str, str]:
-        return (self.brand, str(self.current_period), str(self.reference_period))
-
-    @property
     def recipient_id(self) -> int | None:
         """Row of T_Control_Autoreport_Recipients that requested this deck."""
         return self.recipient_ids[0] if self.recipient_ids else None
-
-    def default_file_name(self) -> str:
-        return safe_file_name(
-            f"VW_KPI_Report_{self.brand}_{self.current_period}_vs_{self.reference_period}"
-        )
 
 
 def safe_file_name(text: str) -> str:
@@ -187,10 +176,6 @@ def get_kpi_deck_config(
             "template_id": template.id,
             "email_subject": template.render_subject(
                 request.brand, request.current_period, request.reference_period
-            ),
-            "email_intro": (
-                f"Anbei der KPI-Report für {request.brand} "
-                f"({request.current_period} im Vergleich zu {request.reference_period}):"
             ),
         }
 

@@ -14,11 +14,15 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING
 
 from pptx import Presentation
 
 from pptcreator.kpi.base import KpiResult, KpiSnapshot, ReportPeriod, Rows
 from pptcreator.models.enum import ChartObjects, ChartType
+
+if TYPE_CHECKING:
+    from pptcreator.kpi.brand_policy import BrandPolicy
 
 OVERVIEW_SLIDE = 0
 DETAIL_SLIDE = 1
@@ -76,10 +80,7 @@ def build_output_slides(
         slides = [_overview_slide(result, overview_slots, show_data_labels)]
         slides.extend(_detail_slides(result, detail_slots, per_slide, show_data_labels))
         for slide in slides:
-            slide["text_values"] = {
-                **text_values,
-                "kpi_explanation": _explanation(result) if slide["template_slide"] == OVERVIEW_SLIDE else "",
-            }
+            slide["text_values"] = {**text_values, "kpi_explanation": _explanation(result)}
         output_slides.extend(slides)
 
     logging.info(f"Built {len(output_slides)} output slides for {len(results)} KPI(s).")
@@ -126,7 +127,7 @@ def _text_values(result: KpiResult, brand_policy: "BrandPolicy | None" = None) -
 
     ``footnote`` is always present: an empty string blanks the token, so brands without a
     footnote row never show a literal ``{footnote}`` on the slide. ``kpi_explanation`` is
-    added per slide by the caller (overview slide only). ``datenquelle_run`` is the current
+    added per slide by the caller (overview and COM slides). ``datenquelle_run`` is the current
     snapshot's run, 'V01-B (46/2025)'; the week label when the source does not know it.
     """
     run_label = result.current.run_label
@@ -171,7 +172,7 @@ def _uses_metric(result: KpiResult, snapshot: KpiSnapshot) -> bool:
 
 
 EXPLANATION_MARK = "*"
-"""Links the overview value ('45 %*') to its explanation ('* Anteil rote BKAs')."""
+"""Links a value ('45 %*') to its explanation ('* Anteil rote BKAs') on the same slide."""
 
 
 def _explanation_text(result: KpiResult) -> str:
@@ -184,25 +185,27 @@ def _explanation(result: KpiResult) -> str:
     return f"{EXPLANATION_MARK} {text}" if text else ""
 
 
+def _mark(result: KpiResult, value: str) -> str:
+    # Only mark a value whose explanation is actually on the slide
+    return f"{value}{EXPLANATION_MARK}" if value and _explanation_text(result) else value
+
+
 def _overview_value(result: KpiResult, snapshot: KpiSnapshot) -> str:
     if _uses_metric(result, snapshot):
         value = result.definition.metric.render(snapshot.metric_text)
     else:
         value = _avg_text(result, snapshot.average_text)
-    # Only mark a value whose explanation is actually on the slide
-    if value and _explanation_text(result):
-        value += EXPLANATION_MARK
-    return value
+    return _mark(result, value)
 
 
 def _commodity_metric_value(result: KpiResult, snapshot: KpiSnapshot, commodity: str) -> str:
     """Metric value of a COM; a COM without value gets the metric's empty text ('0 %'),
-    avg_age without value falls back to the number of BKAs as before."""
+    avg_age without value falls back to the number of BKAs as before (without a mark)."""
     metric = result.definition.metric
     text = snapshot.commodity_metric_text.get(commodity) or metric.empty_text
     if text is None:
         return _total_text(snapshot.commodity_rows[commodity])
-    return metric.render(text)
+    return _mark(result, metric.render(text))
 
 
 def _overview_lines(result: KpiResult, snapshot: KpiSnapshot) -> list[list[tuple[str, str]]]:
@@ -313,8 +316,8 @@ def _commodity_headline(
     cur_avg = cur.commodity_average_text.get(commodity)
     if label is not None and cur_avg:
         ref_avg = ref.commodity_average_text.get(commodity)
-        current_value = f"{label} {cur_avg}"
-        reference_value = f"{label} {ref_avg}" if ref_avg else "-"
+        current_value = _mark(result, f"{label} {cur_avg}")
+        reference_value = _mark(result, f"{label} {ref_avg}") if ref_avg else "-"
     else:
         current_value = _total_text(cur.commodity_rows[commodity])
         ref_rows = ref.commodity_rows.get(commodity)
@@ -323,7 +326,3 @@ def _commodity_headline(
         [(f"{commodity} {current_value}", "first")],
         [(f"{_week(ref.period, short=True)}: {reference_value}", "first")],
     ]
-
-
-def describe_periods(current: ReportPeriod, reference: ReportPeriod) -> str:
-    return f"{current} vs. {reference}"

@@ -1,7 +1,6 @@
 import re
 
 from pptx import presentation
-from pptx.chart.chart import Chart
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION

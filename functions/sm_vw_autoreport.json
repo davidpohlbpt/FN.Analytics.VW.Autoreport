@@ -1,0 +1,86 @@
+{
+  "Comment": "VW Autoreport: render and email one report per recipient",
+  "StartAt": "Map",
+  "QueryLanguage": "JSONata",
+  "States": {
+    "Map": {
+      "Type": "Map",
+      "Items": "{% $states.input.requests %}",
+      "MaxConcurrency": 1,
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "vw-autoreport-render",
+        "States": {
+          "vw-autoreport-render": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Arguments": {
+              "FunctionName": "arn:aws:lambda:eu-west-1:130973426243:function:vw-autoreport-render:$LATEST",
+              "Payload": "{% $states.input %}"
+            },
+            "Output": "{% $states.result.Payload %}",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "Output": "{% $states.errorOutput %}",
+                "Next": "RenderFailed"
+              }
+            ],
+            "Next": "vw-autoreport-sendemail"
+          },
+          "vw-autoreport-sendemail": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Arguments": {
+              "FunctionName": "arn:aws:lambda:eu-west-1:130973426243:function:vw-autoreport-sendemail:$LATEST",
+              "Payload": "{% $states.input %}"
+            },
+            "Output": "{% $states.result.Payload %}",
+            "Retry": [
+              {
+                "ErrorEquals": ["Lambda.TooManyRequestsException"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "Output": "{% $states.errorOutput %}",
+                "Next": "SendEmailFailed"
+              }
+            ],
+            "End": true
+          },
+          "RenderFailed": {
+            "Type": "Pass",
+            "End": true
+          },
+          "SendEmailFailed": {
+            "Type": "Pass",
+            "End": true
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}

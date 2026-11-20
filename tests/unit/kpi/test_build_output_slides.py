@@ -210,14 +210,14 @@ def test_metric_value_under_every_donut():
     result = _metric_result(PERCENT, {"BC": "50 %", "BI": None, "BM": "7 %"}, {"BC": "30 %", "BI": None})
     slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
 
-    # the star links the overview value to the explanation; detail slides have no explanation
+    # the star links each value to the explanation on the same slide
     assert slides[0]["charts"]["Chart 1"]["headline"] == "KW37 – Audi\nrot 40 %*"
     assert slides[0]["charts"]["Chart 2"]["headline"] == "KW45 – Audi\nrot 45 %*"
     detail = slides[1]["charts"]
-    assert detail["Chart 3"]["headline"] == "BC rot 50 %\nKW37: rot 30 %"
+    assert detail["Chart 3"]["headline"] == "BC rot 50 %*\nKW37: rot 30 %*"
     # a COM without value (e.g. zero-filled) shows the empty text, a COM missing in the reference '-'
-    assert detail["Chart 4"]["headline"] == "BI rot 0 %\nKW37: rot 0 %"
-    assert detail["Chart 5"]["headline"] == "BM rot 7 %\nKW37: -"
+    assert detail["Chart 4"]["headline"] == "BI rot 0 %*\nKW37: rot 0 %*"
+    assert detail["Chart 5"]["headline"] == "BM rot 7 %*\nKW37: -"
 
 
 def test_ratio_metric_without_label():
@@ -242,13 +242,20 @@ def test_metric_not_computed_by_the_source_falls_back_to_the_average():
     result.definition = dataclasses.replace(KPI, metric=PERCENT)  # snapshot.metric_text is None
     slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
     assert slides[0]["charts"]["Chart 2"]["headline"] == "KW45 – Audi\nØ 1 Jahr*"
+    assert slides[1]["charts"]["Chart 3"]["headline"] == "BC Ø 2 Monate*\nKW37: Ø 2 Monate*"
 
 
-def test_kpi_explanation_only_on_the_overview_slide():
+def test_avg_age_count_fallback_is_not_marked():
+    avg_age = KpiMetric(kpi_key="t", metric_type="avg_age", label="Ø", explanation_text="BKA Alter")
+    result = _metric_result(avg_age, {"BI": None}, {"BI": None}, total="1 Jahr", ref_total="1 Jahr")
+    slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
+    assert slides[1]["charts"]["Chart 3"]["headline"] == "BI 3\nKW37: 3"
+
+
+def test_kpi_explanation_on_overview_and_commodity_slides():
     result = _metric_result(PERCENT, {"BC": "50 %"}, {"BC": "30 %"})
     slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS)
-    assert slides[0]["text_values"]["kpi_explanation"] == "* Anteil rote BKAs"
-    assert slides[1]["text_values"]["kpi_explanation"] == ""
+    assert [s["text_values"]["kpi_explanation"] for s in slides] == ["* Anteil rote BKAs"] * 2
 
     without_metric = build_output_slides([_result(["BC"])], template_slots=TEMPLATE_SLOTS)
     assert {s["text_values"]["kpi_explanation"] for s in without_metric} == {""}

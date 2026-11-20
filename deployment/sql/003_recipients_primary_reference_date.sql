@@ -62,19 +62,9 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Autoreport_Recipients_
         ON control.T_Control_Autoreport_Recipients (template_id) WHERE send_now = 1;
 
 -- ---------------------------------- Runs ----------------------------------- #
-IF COL_LENGTH('control.T_Control_Autoreport_Runs', 'user_email') IS NULL
-    ALTER TABLE control.T_Control_Autoreport_Runs ADD user_email NVARCHAR(1000) NULL;
 IF COL_LENGTH('control.T_Control_Autoreport_Runs', 'recipient_id') IS NULL
     ALTER TABLE control.T_Control_Autoreport_Runs ADD recipient_id INT NULL;
-IF COL_LENGTH('control.T_Control_Autoreport_Runs', 'primary_date') IS NULL
-    ALTER TABLE control.T_Control_Autoreport_Runs ADD primary_date NVARCHAR(30) NULL;
-IF COL_LENGTH('control.T_Control_Autoreport_Runs', 'reference_date') IS NULL
-    ALTER TABLE control.T_Control_Autoreport_Runs ADD reference_date NVARCHAR(30) NULL;
-
--- Keep the old period strings visible in the new columns (EXEC: the columns may only have
--- been added above, in this same batch)
-EXEC (N'UPDATE control.T_Control_Autoreport_Runs SET primary_date = current_period WHERE primary_date IS NULL');
-EXEC (N'UPDATE control.T_Control_Autoreport_Runs SET reference_date = reference_period WHERE reference_date IS NULL');
+-- Existing run snapshots are consolidated by 007_simplify_autoreport_runs.sql.
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Autoreport_Runs_OpenClaim'
                AND object_id = OBJECT_ID('control.T_Control_Autoreport_Runs'))

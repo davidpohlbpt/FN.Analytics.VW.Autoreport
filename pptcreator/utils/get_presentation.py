@@ -1,5 +1,4 @@
 import io
-from pathlib import PurePosixPath
 
 from pptx import Presentation, presentation
 from pycore.easy import storage

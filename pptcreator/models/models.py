@@ -7,104 +7,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from pptcreator.config import settings
 from pptcreator.models.enum import Languages
 
-SCHEMA = settings.app_db_schema
-
-
-class Mappings(DeclarativeBase):
-    __tablename__ = "T_CONTROL_PptCreator_Mappings"
-    __table_args__ = {"schema": SCHEMA, "extend_existing": True}
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    """Internal identifier for mapping
-    """
-
-    template_object_name: Mapped[str] = mapped_column(sa.String(500))
-    """Object identifier for object in the ppt templates
-    """
-
-    menu_item_id: Mapped[int]
-    """Menu item id in DQN
-    """
-
-    report_id: Mapped[int]
-    """Report Id in DQN
-    """
-
-    tile_id: Mapped[int]
-    """Tile identifier in DQN
-    """
-
-    chart_id: Mapped[int]
-    """Chart identifier in DQN
-    """
-
-    template_id: Mapped[int] = mapped_column(
-        sa.ForeignKey(f"{SCHEMA}.T_CONTROL_PptCreator_Templates.id"),
-    )
-    """Template identifier
-    """
-
-
-class Templates(DeclarativeBase):
-    __tablename__ = "T_CONTROL_PptCreator_Templates"
-    __table_args__ = {"schema": SCHEMA, "extend_existing": True}
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    """Internal identifier for template
-    """
-
-    template_link: Mapped[str] = mapped_column(sa.String(500))
-    """Link to the ppt template in Azure Blob Storage
-    """
-
-    language: Mapped[Languages] = mapped_column(
-        sa.Enum(Languages, values_callable=lambda e: [m.value for m in e])
-    )
-
-    filter_column: Mapped[str | None] = mapped_column(sa.String(500))  # nullable=True!
-    """Filter column for the project, if None then no filtering is applied
-    """
-
-    is_active: Mapped[bool]
-    """Indicates whether the template is active
-    """
-
-    target_file_name: Mapped[str] = mapped_column(sa.String(500))
-    """Target file name for the generated ppt
-    """
-
-    target_blob_container: Mapped[str] = mapped_column(sa.String(500))
-    """Target blob container for the generated ppt
-    """
-
-    headline_substring: Mapped[str] = mapped_column(sa.String(500))
-    """Substring displayed in the headline plus slide specific filter string
-    """
-
-
-class Recipients(DeclarativeBase):
-    __tablename__ = "T_CONTROL_PptCreator_Recipients"
-    __table_args__ = {"schema": SCHEMA, "extend_existing": True}
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    """Internal identifier for recipient
-    """
-
-    recipient_email: Mapped[str] = mapped_column(sa.String(500))
-    """Email of the recipient
-    """
-
-    template_id: Mapped[int] = mapped_column(
-        sa.ForeignKey(f"{SCHEMA}.T_CONTROL_PptCreator_Templates.id"),
-    )
-    """Template identifier
-    """
-
-    is_active: Mapped[bool]
-    """Indicates whether the recipient is active
-    """
-
-
 # ------------------------------------------------------------------------------ #
 # Autoreport control tables (ReportDB, schema settings.autoreport_schema)
 #
@@ -304,7 +206,7 @@ class AutoreportKpiMetrics(DeclarativeBase):
     """Prefix in front of the value, e.g. 'Ø'; NULL/'' -> value only"""
 
     explanation_text: Mapped[str | None] = mapped_column(sa.String(500))
-    """Text of the template's {kpi_explanation} token on the overview slide"""
+    """Text of the template's {kpi_explanation} token on overview and COM slides"""
 
     showed_bkas: Mapped[str | None] = mapped_column(sa.String(200))
     """Data source wording for the template's {showed_Bkas} token"""
@@ -344,7 +246,7 @@ class AutoreportRecipients(DeclarativeBase):
     """Comparison run, e.g. 'V01-B (46/2025)', mandatory"""
 
     send_now: Mapped[bool | None] = mapped_column(default=False)
-    """Set by the frontend; cleared by the record step once the mail was sent"""
+    """Set by the frontend; reset by vw-autoreport-sendemail after sending, and on failure"""
 
     IsDeleted: Mapped[bool] = mapped_column(default=False)
     """Soft delete of the frontend; deleted rows are never planned"""
@@ -361,27 +263,20 @@ class AutoreportRuns(DeclarativeBase):
     """UUID shared by all decks of one planner invocation"""
 
     template_id: Mapped[int]
-    user_email: Mapped[str | None] = mapped_column(sa.String(1000))
-    """E-mail of the requesting recipient row"""
+    recipients: Mapped[str | None] = mapped_column(sa.String(1000))
+    """Email snapshot of the requesting recipient row (one recipient per deck)"""
     recipient_id: Mapped[int | None]
     """Row id in T_Control_Autoreport_Recipients; also the claim that prevents double sends"""
 
     brand: Mapped[str] = mapped_column(sa.String(200))
-    primary_date: Mapped[str | None] = mapped_column(sa.String(30))
-    reference_date: Mapped[str | None] = mapped_column(sa.String(30))
     current_period: Mapped[str | None] = mapped_column(sa.String(50))
-    """Legacy column, kept for older rows"""
+    """Requested report_week"""
     reference_period: Mapped[str | None] = mapped_column(sa.String(50))
-    """Legacy column, kept for older rows"""
-
-    trigger: Mapped[str] = mapped_column(sa.String(20))
-    """'adhoc' | 'manual'"""
+    """Requested comparison_week"""
 
     status: Mapped[str] = mapped_column(sa.String(20))
     """'processing' (claim) | 'rendered' | 'sent' | 'skipped' | 'failed'"""
 
-    s3_key: Mapped[str | None] = mapped_column(sa.String(1000))
-    message_id: Mapped[str | None] = mapped_column(sa.String(200))
     error: Mapped[str | None] = mapped_column(sa.String(4000))
 
     created_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime)
