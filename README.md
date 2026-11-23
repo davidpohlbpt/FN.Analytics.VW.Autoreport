@@ -53,31 +53,47 @@ render_deck(request)
 
 ## Control tables (ReportDB, schema `control`)
 
-DDL in `deployment/sql/001_autoreport_tables.sql`, example seed in `002_seed_vw_weekly.sql`,
-per-brand presentation in `004_brand_policy.sql`, value under each donut in `005_kpi_metrics.sql`,
-week dropdowns and the frontend's recipient columns in `006_dropdown_runs.sql`, and data source
-wording in `008_kpi_data_source_text.sql`. Run 008 before deploying the application version
-that reads its column.
+Fresh PROD deployment is consolidated into two scripts in `deployment/sql`:
+
+1. `001_autoreport_core.sql` creates the control tables, views and brand-resolution trigger,
+   then seeds the current template, KPI mappings, active brands, KPI metrics and VW PKW
+   presentation policy. Before running it, replace the two required PROD S3 URI values near
+   the top of the seed section (do not copy INT bucket paths). The script does not add
+   example recipient rows.
+2. `002_autoreport_frontend.sql` creates the IdentityServer menu entry and ReportDB editor
+   configuration, then writes the final DE/EN translations. It requires the IDs 950, 9501,
+   9502, 95001 and 950100-950204 to be free; it checks these before changing anything.
+
+Run both scripts in that order on the same SQL Server instance. Prerequisites are ReportDB
+with `dbo.T_RESULT_Leitstand_Overview`, the ReportDB frontend configuration tables, and the
+IdentityServer and Translation databases/tables. The database login needs the DDL/DML access
+required by both scripts. The PROD template must already exist at the configured S3 URI.
+The IdentityServer `AutoReportRecipientsClaim` must also be granted to the intended users.
+Reload the frontend after deployment to clear cached configuration.
+
+These are fresh-install scripts, not an upgrade path for an existing Autoreport installation.
+They deliberately leave `dbo.T_RESULT_AutoReportRecipients` untouched (including its existing
+PROD data); they do not migrate that legacy list into the new control table. Back up PROD and
+confirm the target environment and reserved IDs before execution. The scripts have not been
+executed against either database during this change.
 
 | Table | Purpose | Key columns |
 |---|---|---|
 | `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `email_subject` |
-| `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` (deprecated: only used when the KPI has no row in `T_Control_Autoreport_KpiMetrics`) |
+| `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`leitstand`/`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` (deprecated: only used when the KPI has no row in `T_Control_Autoreport_KpiMetrics`) |
 | `T_Control_Autoreport_KpiMetrics` | value under each donut, per KPI (all brands/templates) | `kpi_key`, `metric_type` (`avg_age`/`percent`/`ratio`/`count`), `numerator_columns` / `denominator_columns` (comma-separated columns of `T_RESULT_Leitstand_Overview`, summed with the donut's filter; `NULL` = donut total), `numerator_not_null_column` (only rows where it is not NULL), `label` (prefix, e.g. `Ø`), `explanation_text` (`{kpi_explanation}` on overview and COM slides), `showed_bkas` (data source wording on both slides), `is_active`. Structured on purpose, no SQL; invalid rows are ignored with a warning. **No active row ⇒ previous behaviour** (`average_label`). Percent `45 %` (whole number), ratio `120 / 30`; no data ⇒ `0 %` / `0 / 0` |
 | `T_Control_Autoreport_Brands` | brand master list (frontend dropdown) | `brand_name` (display), `filter_value` (`EK_ORG` value), `is_active` |
 | `T_Control_Autoreport_BrandCommodities` | per-brand commodity presentation | `brand_id` (FK Brands), `com_source` (`COM` in `T_RESULT_Leitstand_Overview`), `com_label` (headline label, enables renames), `sort_order`, `show_if_zero`, `is_active`. **No active rows for a brand ⇒ default behaviour** (all COMs, source labels/order, zeros skipped). Rows ⇒ whitelist + rename + order + zero-fill |
 | `T_Control_Autoreport_BrandFeatures` | per-brand feature switches | `brand_id` (FK Brands), `feature_key`, `feature_value` (`''` = explicitly off), `is_active`. **No active rows ⇒ feature off.** Supported key: `footnote_text` = text of the template's `{footnote}` token, so only that brand shows a footnote. Unknown keys are ignored with a warning |
-| `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_id` (FK Brands), `report_week` + `comparison_week` (**mandatory**; the dropdown string `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`; dates `2025-11-28` and `2025-KW46` are accepted too), `send_now`, `IsDeleted` (soft delete, never planned). The backend splits the run string and finds the snapshot by `LAUFKENNUNG` + `LAUF_KW` in `T_RESULT_Leitstand_Overview`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and weeks; two rows with the same brand and weeks write the same file name (later overwrites earlier) |
-| `dbo.V_Autoreport_DropdownValues` | frontend dropdowns (`006_dropdown_runs.sql`) | active brands; `report_week` = every run in `T_RESULT_Leitstand_Overview` as `LAUFKENNUNG (LAUF_KW)`, `comparison_week` = the same without the latest run, `sort_date` = the run's AnalyseZeitpunkt (the frontend sorts by it, newest first, through its data source config `T_CONTROL_Report_DataSourceColumns` (data source 9502, `OrderBy`/`OrderParameter`), also set by 006; a view cannot carry an order). Read live, so a new weekly load appears automatically; snapshots without `LAUFKENNUNG` are not offered. `T_Control_Autoreport_Weeks` is no longer used |
+| `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_name` (frontend value), `brand_id` (resolved by trigger from active brand name or filter value), `report_week` + `comparison_week` (**mandatory**; the dropdown string `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`; dates `2025-11-28` and `2025-KW46` are accepted too), `send_now`, `last_report_time`, `IsDeleted`, and computed `RowID` (= `id`). The backend splits the run string and finds the snapshot by `LAUFKENNUNG` + `LAUF_KW` in `T_RESULT_Leitstand_Overview`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and weeks; two rows with the same brand and weeks write the same file name (later overwrites earlier) |
+| `dbo.V_Autoreport_Recipients` | frontend recipient editor (`001_autoreport_core.sql`) | projects the recipient table, including its computed `RowID` and brand display value |
+| `dbo.V_Autoreport_DropdownValues` | frontend dropdowns (`001_autoreport_core.sql`) | active brands; `report_week` = every run in `T_RESULT_Leitstand_Overview` as `LAUFKENNUNG (LAUF_KW)`, `comparison_week` = the same without the latest run, `sort_date` = the run's AnalyseZeitpunkt (the frontend sorts by it, newest first, through its data source config `T_CONTROL_Report_DataSourceColumns` (data source 9502, `OrderBy`/`OrderParameter`); a view cannot carry an order). Read live, so a new weekly load appears automatically; snapshots without `LAUFKENNUNG` are not offered |
 | `T_Control_Autoreport_Runs` | audit log and the claim that prevents double sends | `run_id`, `template_id`, `recipients` (one email snapshot per deck), `recipient_id`, `brand`, `current_period` (`report_week`), `reference_period` (`comparison_week`), `status` (`processing`/`rendered`/`sent`/`skipped`/`failed`), `error`, `created_at`, `updated_at` |
 
-For existing databases, pause the detect poller and let running workflows finish before
-applying `deployment/sql/007_simplify_autoreport_runs.sql` and deploying the updated
-detect/render code; resume polling after both are updated. This is a one-time migration
-for the existing schema, not needed for fresh tables created by `001`. It preserves
-email and period snapshots, then drops the redundant runs-table columns `user_email`,
-`primary_date`, `reference_date`, `trigger`, `message_id`, and `s3_key`. The S3 key
-remains in the render/send workflow payload; recipient-table columns are unchanged.
+The run table in the fresh-install script already has the final column set used by the
+current code. Do not apply these fresh-install scripts as a migration to an existing
+environment; existing installations need a separately reviewed migration and workflow
+pause/drain plan.
 
 Data sources per KPI:
 
