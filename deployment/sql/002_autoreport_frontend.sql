@@ -97,15 +97,15 @@ INSERT INTO dbo.T_CONTROL_Report_DataSourceColumns
 VALUES
     (950100, N'RowID',             N'numeric',   0, 1, 1, N'RowId',              NULL, NULL, NULL, NULL, 0, 9501, 0, NULL, 0, NULL, 1, NULL),
     (950101, N'email',             N'string',    1, 1, 1, N'TN_Email',           NULL, NULL, NULL, NULL, 1, 9501, 1, NULL, 1, N'ASC', NULL, NULL),
-    (950102, N'brand_name',        N'dropdown',  1, 1, 1, N'TN_Brand',           NULL, NULL, NULL, NULL, 1, 9501, 2, NULL, 0, NULL, NULL, 950201),
-    (950103, N'report_week',       N'dropdown',  1, 1, 1, N'TN_Berichtswoche',   NULL, NULL, NULL, NULL, 1, 9501, 3, NULL, 0, NULL, NULL, 950202),
-    (950104, N'comparison_week',   N'dropdown',  1, 1, 1, N'TN_Abgleichswoche',  NULL, NULL, NULL, NULL, 1, 9501, 4, NULL, 0, NULL, NULL, 950203),
+    (950102, N'brand_name',        N'string',  1, 1, 1, N'TN_Brand',           NULL, NULL, NULL, NULL, 1, 9501, 2, NULL, 0, NULL, NULL, 950201),
+    (950103, N'report_week',       N'string',  1, 1, 1, N'TN_Berichtswoche',   NULL, NULL, NULL, NULL, 1, 9501, 3, NULL, 0, NULL, NULL, 950202),
+    (950104, N'comparison_week',   N'string',  1, 1, 1, N'TN_Abgleichswoche',  NULL, NULL, NULL, NULL, 1, 9501, 4, NULL, 0, NULL, NULL, 950203),
     (950105, N'send_now',          N'boolean',   1, 1, 1, N'TN_SendNow',         NULL, NULL, NULL, NULL, 1, 9501, 5, NULL, 0, NULL, NULL, NULL),
     (950106, N'last_report_time',  N'datetime',  1, 1, 1, N'TN_LastReportTime',  NULL, NULL, NULL, NULL, 0, 9501, 6, NULL, 0, NULL, NULL, NULL),
-    (950201, N'brand_name',        N'string',    0, 0, 0, N'TN_Brand',           NULL, NULL, NULL, NULL, 0, 9502, 1, NULL, 2, N'ASC', NULL, NULL),
+    (950201, N'brand_name',        N'string',    0, 1, 0, N'TN_Brand',           NULL, NULL, NULL, NULL, 0, 9502, 1, NULL, 1, N'ASC', NULL, NULL),
     (950202, N'report_week',       N'string',    0, 0, 0, N'TN_Berichtswoche',   NULL, NULL, NULL, NULL, 0, 9502, 2, NULL, 0, NULL, NULL, NULL),
     (950203, N'comparison_week',   N'string',    0, 0, 0, N'TN_Abgleichswoche',  NULL, NULL, NULL, NULL, 0, 9502, 3, NULL, 0, NULL, NULL, NULL),
-    (950204, N'sort_date',         N'date',      0, 0, 0, NULL,                  NULL, NULL, NULL, NULL, 0, 9502, 4, NULL, 1, N'DESC', NULL, NULL);
+    (950204, N'sort_date',         N'date',      0, 0, 0, NULL,                  NULL, NULL, NULL, NULL, 0, 9502, 4, NULL, 0, NULL, NULL, NULL);
 SET IDENTITY_INSERT dbo.T_CONTROL_Report_DataSourceColumns OFF;
 
 INSERT INTO dbo.T_CONTROL_Report_DataSourceColumnsValidation
@@ -169,8 +169,35 @@ VALUES
     (N'DE', N'TN_AutoReportRecipients_Main_Table_Titel', N'Autoreport-Konfiguration'),
     (N'EN', N'TN_Helptext_AutoReportRecipients_Main_Table', N'Brand, reporting week and comparison week must be chosen from the allowed values.'),
     (N'DE', N'TN_Helptext_AutoReportRecipients_Main_Table', N'Marke, Berichtswoche und Vergleichswoche müssen aus den erlaubten Werten gewählt werden.'),
-    (N'EN', N'TN_AutoReportRecipients_Main_Info_Text', N'<p>Select brand, reporting week and comparison week.</p>'),
-    (N'DE', N'TN_AutoReportRecipients_Main_Info_Text', N'<p>Wählen Sie Marke, Berichtswoche und Vergleichswoche.</p>'),
+    (N'EN', N'TN_AutoReportRecipients_Main_Info', N'<p><br></p>
+<big>
+<p>In this table, you can specify the recipients to whom the Data Quality Report will be sent. Each user can configure their own Control Center Report and select the desired purchasing organization as well as the reporting and comparison week. If you activate “Request Report”, the report will be sent by email within five minutes.</p>
+<br>
+<p><strong>You can add or modify entries using the “Edit” button. Please only edit your own entries.</strong></p>
+<br>
+<p>The “Last Sent” column is filled automatically. Please leave this field empty when adding a new recipient.</p>
+</big>
+<p><br></p>
+<h3><br></h3>'),
+    (N'DE', N'TN_AutoReportRecipients_Main_Info', N'<p><br></p>
+
+<big>
+
+<p>In dieser Tabelle legen Sie fest, an welche Empfänger der Datenqualitätsbericht gesendet wird. Jeder Nutzer kann einen eigenen Control-Center-Bericht konfigurieren und die gewünschte Einkaufsorganisation sowie die Berichts- und Vergleichswoche auswählen. Wenn Sie „Auswertung anfordern“ aktivieren, wird der Bericht innerhalb von fünf Minuten per E-Mail versendet.</p>
+
+<br>
+
+<p><strong>Über die Schaltfläche „Bearbeiten“ können Sie Einträge hinzufügen oder ändern. Bitte bearbeiten Sie nur Ihre eigenen Einträge.</strong> Prüfen Sie zunächst über die Suchleiste in der Spalte „E-Mail“, ob die betreffende E-Mail-Adresse bereits vorhanden ist. Falls ja, ändern Sie bitte den bestehenden Eintrag, statt einen neuen anzulegen.</p>
+
+<br>
+
+<p>Die Spalte „Letzter Versand“ wird automatisch befüllt. Lassen Sie dieses Feld beim Anlegen eines Empfängers leer.</p>
+
+</big>
+
+<p><br></p>
+
+<h3><br></h3>'),
     (N'EN', N'TN_Brand', N'Purchasing organization'),
     (N'DE', N'TN_Brand', N'Einkaufsorganisation'),
     (N'EN', N'TN_Berichtswoche', N'Reporting week'),
