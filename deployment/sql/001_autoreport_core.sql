@@ -344,7 +344,7 @@ FROM (VALUES
     (N'bka_aktualisierung', N'avg_age', NULL, NULL, NULL, N'Ø',
      N'Durchschnittliches BKA Alter seit der letzten Aktualisierung', NULL),
     (N'bka_bearbeitungsstatus', N'percent', N'BearbSynchron', NULL, N'y', NULL,
-     N'Anteil synchroner BKAs (beidseitig berstätigt)', NULL),
+     N'Anteil synchroner BKAs (beidseitig bestätigt)', NULL),
     (N'uvb_fehlercode', N'percent', N'y', N'GrauUVB', N'y', NULL,
      N'Anteil grauer BKAs', N'alle BKAs mit UVB Fehlern'),
     (N'rote_bka', N'ratio', NULL, NULL, N'RedOver52', NULL,
