@@ -57,8 +57,9 @@ def handler(event, context):
             recipient_id = request.recipient_id
             brand = request.brand
             reference_period = str(request.reference_period)
+            recipient_email = ", ".join(request.recipients)
         else:
-            run_id, recipient_id, brand, reference_period = _run_identity(event)
+            run_id, recipient_id, brand, reference_period, recipient_email = _run_identity(event)
         if run_id or recipient_id is not None:
             run_log.reset_send_now(recipient_id)
             run_log.update_status(
@@ -69,15 +70,18 @@ def handler(event, context):
                 recipient_id=recipient_id,
                 error=error,
             )
-            error = f"run_id={run_id}, recipient_id={recipient_id}, brand={brand}: {error}"
+            error = (
+                f"run_id={run_id}, recipient_id={recipient_id}, "
+                f"recipient_email={recipient_email or None}, brand={brand}: {error}"
+            )
         send_alert(os.environ.get("SNS_URL"), error)
         raise
 
 
-def _run_identity(event) -> tuple[str | None, int | None, str, str]:
+def _run_identity(event) -> tuple[str | None, int | None, str, str, str]:
     """Identify the claimed run row from the raw event when the request itself is invalid."""
     if not isinstance(event, dict):
-        return None, None, "", ""
+        return None, None, "", "", ""
     recipient_ids = event.get("recipient_ids") or []
     recipient_id = None
     if len(recipient_ids) == 1:
@@ -85,11 +89,15 @@ def _run_identity(event) -> tuple[str | None, int | None, str, str]:
             recipient_id = int(recipient_ids[0])
         except (TypeError, ValueError):
             pass
+    recipients = event.get("recipients") or []
+    if isinstance(recipients, str):
+        recipients = [recipients]
     return (
         event.get("run_id"),
         recipient_id,
         str(event.get("brand") or ""),
         str(event.get("reference_period") or ""),
+        ", ".join(str(r) for r in recipients),
     )
 
 

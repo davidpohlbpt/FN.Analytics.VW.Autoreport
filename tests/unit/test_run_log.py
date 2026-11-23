@@ -164,6 +164,7 @@ def test_render_failure_alert_preserves_error_and_updates_claim(
     assert str(raised.value) in alert["Message"]
     assert "run_id=run-1" in alert["Message"]
     assert "recipient_id=42" in alert["Message"]
+    assert "recipient_email=a@example.com" in alert["Message"]
     if sns_fails:
         assert "Could not send render failure alert" in caplog.text
     with runs_engine.connect() as connection:
