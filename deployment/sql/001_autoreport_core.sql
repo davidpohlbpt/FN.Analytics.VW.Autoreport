@@ -420,7 +420,13 @@ SELECT NULL, NULL, l.run_label, CAST(0 AS BIT), CAST(l.AnalyseZeitpunkt AS DATE)
 FROM labelled l
 WHERE l.is_latest = 0
 UNION ALL
-SELECT NULL, CAST(N'Aktuelle Woche' AS NVARCHAR(50)), NULL, CAST(0 AS BIT), CAST(NULL AS DATE);
+SELECT NULL, CAST(CONCAT(N'Aktuelle Woche ', l.run_label) AS NVARCHAR(50)),
+       NULL, CAST(0 AS BIT), CAST(NULL AS DATE)
+FROM labelled l
+WHERE l.is_latest = 1
+UNION ALL
+SELECT NULL, CAST(N'Aktuelle Woche' AS NVARCHAR(50)), NULL, CAST(0 AS BIT), CAST(NULL AS DATE)
+WHERE NOT EXISTS (SELECT 1 FROM labelled WHERE is_latest = 1);
 GO
 
 -- Read-only verification queries; do not copy recipient data to validate deployment.

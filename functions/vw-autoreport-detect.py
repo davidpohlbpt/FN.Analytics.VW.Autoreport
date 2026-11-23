@@ -58,7 +58,7 @@ def get_new_recipients(report_conn: object) -> list[dict]:
     """
     send_now rows of active templates and brands. A request is skipped while an
     identical one (email, brand, report_week, comparison_week) is processing or rendered.
-    Resolve 'Aktuelle Woche' once for both the duplicate check and the render input.
+    Resolve the current-week selection once for both the duplicate check and render input.
     """
     cursor = report_conn.cursor()
     cursor.execute("""
@@ -77,7 +77,8 @@ def get_new_recipients(report_conn: object) -> list[dict]:
         if run and week:
             latest_run = f"{run} ({week})"
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT r.id, r.template_id, r.email, b.filter_value AS brand,
                r.report_week, r.comparison_week
         FROM control.T_Control_Autoreport_Recipients r
@@ -94,13 +95,16 @@ def get_new_recipients(report_conn: object) -> list[dict]:
                 AND LOWER(LTRIM(RTRIM(run.recipients))) = LOWER(LTRIM(RTRIM(r.email)))
                 AND run.brand = b.filter_value
                 AND run.current_period = CASE
-                    WHEN LTRIM(RTRIM(r.report_week)) = 'Aktuelle Woche' THEN ?
+                    WHEN LTRIM(RTRIM(r.report_week)) = 'Aktuelle Woche'
+                      OR LTRIM(RTRIM(r.report_week)) LIKE 'Aktuelle Woche%' THEN ?
                     ELSE LTRIM(RTRIM(r.report_week))
                 END
                 AND run.reference_period = LTRIM(RTRIM(r.comparison_week))
           )
         ORDER BY r.id
-        """, (latest_run,))
+        """,
+        (latest_run,),
+    )
     columns = [column[0] for column in cursor.description]
     rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
     cursor.close()
@@ -110,9 +114,11 @@ def get_new_recipients(report_conn: object) -> list[dict]:
     for row in rows:
         email = (row["email"] or "").strip()
         report_week = (row["report_week"] or "").strip()
-        if report_week == "Aktuelle Woche":
+        if is_current_week_selection(report_week):
             if latest_run is None:
-                raise ValueError("No valid latest snapshot available for Aktuelle Woche.")
+                raise ValueError(
+                    "No valid latest snapshot available for Aktuelle Woche."
+                )
             report_week = latest_run
         comparison_week = (row["comparison_week"] or "").strip()
         if (
@@ -146,6 +152,10 @@ def get_new_recipients(report_conn: object) -> list[dict]:
             }
         )
     return recipients
+
+
+def is_current_week_selection(report_week: str) -> bool:
+    return report_week == report_week.startswith(f"Aktuelle Woche")
 
 
 def start_runs(report_conn: object, run_id: str, recipients: list[dict]) -> None:

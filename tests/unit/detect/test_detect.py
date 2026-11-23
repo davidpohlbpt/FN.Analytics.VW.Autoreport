@@ -206,7 +206,7 @@ def test_processing_snapshot_blocks_duplicates_with_the_simplified_columns(detec
             INSERT INTO control.T_Control_Autoreport_Templates VALUES (1, 1);
             INSERT INTO control.T_Control_Autoreport_Brands VALUES (1, 'VW PKW', 1);
             INSERT INTO control.T_Control_Autoreport_Recipients VALUES
-                (42, 1, ' a@example.com ', 1, ' Aktuelle Woche ', ' KW37 ', 1, 0),
+                (42, 1, ' a@example.com ', 1, ' Aktuelle Woche V01-D (46/2026) ', ' KW37 ', 1, 0),
                 (43, 1, 'a@example.com', 1, 'V01-D (48/2025)', 'KW38', 1, 0);
             INSERT INTO control.T_Control_Autoreport_Runs VALUES
                 (99, 'A@example.com', 'VW PKW', 'V01-D (48/2025)', 'KW37', 'processing');
@@ -231,7 +231,7 @@ def test_processing_snapshot_blocks_duplicates_with_the_simplified_columns(detec
 def test_current_week_uses_one_resolution_for_sql_claims_and_payload(detect):
     module, state = detect
     state["connection"] = FakeConnection([
-        _row(42, report_week="Aktuelle Woche"),
+        _row(42, report_week="Aktuelle Woche V01-D (46/2026)"),
         _row(43),
         _row(44, email="b@example.com", report_week="Aktuelle Woche"),
     ])
@@ -246,13 +246,18 @@ def test_current_week_uses_one_resolution_for_sql_claims_and_payload(detect):
     assert all(params[5] == "V01-D (48/2025)" for params in inserts)
     payload = json.loads(state["aws"].executions[0]["input"])
     assert all(request["current_period"] == "V01-D (48/2025)" for request in payload["requests"])
-    assert state["connection"].rows[0][4] == "Aktuelle Woche"
+    assert state["connection"].rows[0][4] == "Aktuelle Woche V01-D (46/2026)"
 
 
 @pytest.mark.parametrize("snapshot", [None, (None, None), (" ", "48/2025")])
-def test_current_week_without_valid_snapshot_fails_before_claiming(detect, snapshot):
+@pytest.mark.parametrize(
+    "report_week", ["Aktuelle Woche", "Aktuelle Woche V01-D (46/2026)"]
+)
+def test_current_week_without_valid_snapshot_fails_before_claiming(
+    detect, snapshot, report_week
+):
     module, state = detect
-    state["connection"] = FakeConnection([_row(42, report_week="Aktuelle Woche")])
+    state["connection"] = FakeConnection([_row(42, report_week=report_week)])
     state["connection"].latest_snapshot = snapshot
 
     with pytest.raises(ValueError, match="No valid latest snapshot"):
