@@ -162,9 +162,8 @@ def test_render_failure_alert_preserves_error_and_updates_claim(
     alert = sns.publish.call_args.kwargs
     assert alert["TopicArn"] == topic
     assert str(raised.value) in alert["Message"]
-    if failure != "invalid_input":
-        assert "run_id=run-1" in alert["Message"]
-        assert "recipient_id=42" in alert["Message"]
+    assert "run_id=run-1" in alert["Message"]
+    assert "recipient_id=42" in alert["Message"]
     if sns_fails:
         assert "Could not send render failure alert" in caplog.text
     with runs_engine.connect() as connection:
@@ -172,7 +171,9 @@ def test_render_failure_alert_preserves_error_and_updates_claim(
             sa.select(AutoreportRuns.status, AutoreportRuns.error).order_by(AutoreportRuns.id)
         ).all()
     if failure == "invalid_input":
-        assert rows == [("processing", None), ("processing", None)]
+        assert rows[0][0] == "failed"
+        assert "Unsupported period 'invalid'" in rows[0][1]
+        assert rows[1] == ("processing", None)
     else:
         assert rows == [("failed", "broken deck"), ("processing", None)]
 

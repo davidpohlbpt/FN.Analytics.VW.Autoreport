@@ -155,7 +155,7 @@ def get_new_recipients(report_conn: object) -> list[dict]:
 
 
 def is_current_week_selection(report_week: str) -> bool:
-    return report_week == report_week.startswith(f"Aktuelle Woche")
+    return report_week.startswith("Aktuelle Woche")
 
 
 def start_runs(report_conn: object, run_id: str, recipients: list[dict]) -> None:

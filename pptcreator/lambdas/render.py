@@ -53,21 +53,44 @@ def handler(event, context):
         logging.exception(f"Render invocation failed: {exc}")
         error = str(exc)
         if request is not None:
-            run_log.reset_send_now(request.recipient_id)
+            run_id = request.run_id
+            recipient_id = request.recipient_id
+            brand = request.brand
+            reference_period = str(request.reference_period)
+        else:
+            run_id, recipient_id, brand, reference_period = _run_identity(event)
+        if run_id or recipient_id is not None:
+            run_log.reset_send_now(recipient_id)
             run_log.update_status(
-                request.run_id,
-                request.brand,
-                str(request.reference_period),
+                run_id,
+                brand,
+                reference_period,
                 status="failed",
-                recipient_id=request.recipient_id,
+                recipient_id=recipient_id,
                 error=error,
             )
-            error = (
-                f"run_id={request.run_id}, recipient_id={request.recipient_id}, "
-                f"brand={request.brand}: {error}"
-            )
+            error = f"run_id={run_id}, recipient_id={recipient_id}, brand={brand}: {error}"
         send_alert(os.environ.get("SNS_URL"), error)
         raise
+
+
+def _run_identity(event) -> tuple[str | None, int | None, str, str]:
+    """Identify the claimed run row from the raw event when the request itself is invalid."""
+    if not isinstance(event, dict):
+        return None, None, "", ""
+    recipient_ids = event.get("recipient_ids") or []
+    recipient_id = None
+    if len(recipient_ids) == 1:
+        try:
+            recipient_id = int(recipient_ids[0])
+        except (TypeError, ValueError):
+            pass
+    return (
+        event.get("run_id"),
+        recipient_id,
+        str(event.get("brand") or ""),
+        str(event.get("reference_period") or ""),
+    )
 
 
 def send_alert(sns_url: str | None, error: str) -> None:
