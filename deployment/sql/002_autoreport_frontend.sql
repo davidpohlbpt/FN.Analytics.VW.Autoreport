@@ -136,7 +136,10 @@ SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Tiles OFF;
 
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Text ON;
 INSERT INTO dbo.T_CONTROL_Layout_Text (TextId, TileID, Content)
-VALUES (9501, 9501, N'TN_AutoReportRecipients_Main_Info_Text');
+VALUES (9501, 9501, N'TN_AutoReportRecipients_Info
+<div align="left"><img alt="Not Found" src="https://volkswagen-net.de/wikis/download/attachments/2755133687/VW_autoreport_tutorial_DE.png?version=1&modificationDate=1795439797000&api=v2" width="75%" height="75%">
+<p><br></p>
+TN_AutoReportRecipients_Explanation');
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Text OFF;
 
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Table ON;
@@ -180,23 +183,15 @@ VALUES
 <p><br></p>
 <h3><br></h3>'),
     (N'DE', N'TN_AutoReportRecipients_Main_Info', N'<p><br></p>
-
 <big>
-
 <p>In dieser Tabelle legen Sie fest, an welche Empfänger der Datenqualitätsbericht gesendet wird. Jeder Nutzer kann einen eigenen Control-Center-Bericht konfigurieren und die gewünschte Einkaufsorganisation sowie die Berichts- und Vergleichswoche auswählen. Wenn Sie „Auswertung anfordern“ aktivieren, wird der Bericht innerhalb von fünf Minuten per E-Mail versendet.</p>
-
 <br>
-
 <p><strong>Über die Schaltfläche „Bearbeiten“ können Sie Einträge hinzufügen oder ändern. Bitte bearbeiten Sie nur Ihre eigenen Einträge.</strong> Prüfen Sie zunächst über die Suchleiste in der Spalte „E-Mail“, ob die betreffende E-Mail-Adresse bereits vorhanden ist. Falls ja, ändern Sie bitte den bestehenden Eintrag, statt einen neuen anzulegen.</p>
-
 <br>
-
 <p>Die Spalte „Letzter Versand“ wird automatisch befüllt. Lassen Sie dieses Feld beim Anlegen eines Empfängers leer.</p>
 
 </big>
-
 <p><br></p>
-
 <h3><br></h3>'),
     (N'EN', N'TN_Brand', N'Purchasing organization'),
     (N'DE', N'TN_Brand', N'Einkaufsorganisation'),
@@ -214,6 +209,20 @@ VALUES
     (N'DE', N'TN_InvalidWeek', N'Bitte wählen Sie eine Woche aus der Liste.'),
     (N'EN', N'TN_EmailValidationAutoReport', N'Please enter a valid e-mail address.'),
     (N'DE', N'TN_EmailValidationAutoReport', N'Bitte tragen Sie eine gültige E-Mail-Adresse ein.'),
+    (N'EN', N'TN_AutoReportRecipients_Explanation', N'<p><strong>Step 1:</strong> Switch to edit mode.</p>
+
+<p><strong>Step 2:</strong> To add a new entry, click the plus icon in the top-right corner. Enter your email address and select the purchasing organization, reporting week, and comparison week from the dropdown menus. Then select the <strong>“Send report”</strong> checkbox to request the report by email.</p>
+
+<p>To edit an existing entry, double-click the relevant row. Save your changes by double-clicking the <strong>“Save”</strong> button.</p>
+
+<p><strong>Step 3:</strong> Check that your entry matches the example and that <strong>“Send report”</strong> is selected. After you save, the report is usually sent by email within about five minutes. Once it has been sent, the checkbox is cleared automatically. To request another report, simply select it again. If you don’t receive an email, check your details and contact us if needed.</p>'),
+    (N'DE', N'TN_AutoReportRecipients_Explanation', N'<p><strong>Schritt 1:</strong> Wechseln Sie in den Editier modus.</p>
+
+<p><strong>Schritt 2:</strong> Um einen neuen Eintrag anzulegen, klicken Sie oben rechts auf das Plus-Symbol. Geben Sie Ihre E-Mail-Adresse ein und wählen Sie die Einkaufsorganisation sowie die Berichts- und Vergleichswoche über die Dropdown-Menüs aus. Klicken Sie anschließend das Kästchen <strong>„Auswertung anfordern“</strong>, damit der Report erstellt und per E-Mail versendet wird.</p>
+
+<p>Um einen bestehenden Eintrag zu ändern, doppelklicken Sie auf die entsprechende Zeile. Speichern Sie Ihre Änderungen mit einem Doppelklick auf die Schaltfläche <strong>„Speichern“</strong>.</p>
+
+<p><strong>Schritt 3:</strong> Prüfen Sie, ob Ihr Eintrag wie im Beispiel aussieht und das Kontrollkästchen <strong>„Auswertung anfordern“</strong> aktiviert ist. Nach dem Speichern wird der Report in der Regel innerhalb von etwa fünf Minuten per E-Mail versendet. Nachdem der Report gesendet wird, wird der Haken von „Auswertung anfordern“ entfernt. Bei erneuter Anfrage können Sie einfach wieder den Haken setzen.Falls Sie keine E-Mail erhalten, prüfen Sie Ihre Angaben und wenden Sie sich bei Bedarf an uns.</p>'),
     (N'EN', N'TN_InvalidSelection', N'Invalid selection'),
     (N'DE', N'TN_InvalidSelection', N'Ungültige Auswahl');
 
