@@ -48,6 +48,8 @@ class RenderResult:
     slides: int | None = None
     size_bytes: int | None = None
     email_subject: str | None = None
+    language: str | None = None
+    """Deck language ('DE'/'EN'); vw-autoreport-sendemail picks the e-mail text by it."""
     error: str | None = None
 
     def as_dict(self) -> dict:
@@ -110,7 +112,8 @@ def render_deck(
     result = RenderResult(status="failed", request=request.to_event())
     try:
         template = template or get_template_config(request.template_id)
-        source = source or RoutingKpiSource()
+        language = (request.language or template.language).value
+        source = source or RoutingKpiSource(language=language)
         container = settings.storage_container
         logging.info(
             f"Render: template {template.id}, {request.brand} "
@@ -151,6 +154,7 @@ def render_deck(
         result.slides = len(config_dict.get("output_slides", []))
         result.size_bytes = size
         result.email_subject = config_dict.get("email_subject")
+        result.language = language
 
     except Exception as exc:
         logging.exception(f"Render for {request.brand} failed: {exc}")

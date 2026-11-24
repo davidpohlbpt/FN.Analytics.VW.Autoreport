@@ -118,6 +118,16 @@ def test_headline_without_average():
     assert slides[1]["charts"]["Chart 3"]["headline"] == "BC 3\nKW37: 3"
 
 
+def test_english_deck_uses_cw_english_numbers_and_wording():
+    result = _result(["BC"], avg=False)
+    result.current.commodity_rows["BC"] = _rows(1000.0, 234.0)
+    slides = build_output_slides([result], template_slots=TEMPLATE_SLOTS, language="EN")
+    assert slides[0]["charts"]["Chart 1"]["headline_lines"][0][0] == ("CW37", "first")
+    assert slides[1]["charts"]["Chart 3"]["headline"] == "BC 1,234\nCW37: 3"
+    assert slides[0]["text_values"]["week"] == "CW45"
+    assert slides[0]["text_values"]["showed_Bkas"] == "all BKAs"
+
+
 def test_rows_are_in_palette_order():
     result = _result(["BC"])
     result.current.total_rows = [{"category": "b", "value": 2.0}, {"category": "a", "value": 1.0}]

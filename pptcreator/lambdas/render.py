@@ -6,7 +6,7 @@ in:  one request of the plan output: {"template_id", "brand", "current_period",
      control tables.
 out: the event for the next Step Functions state, vw-autoreport-sendemail:
      {"recipient", "recipient_id", "run_id", "brand", "bucket", "s3_key", "file_name",
-     "email_subject"} (one recipient per Map item).
+     "email_subject", "language"} (one recipient per Map item).
 Raises on failure so that Step Functions catches it.
 """
 
@@ -140,4 +140,5 @@ def build_send_email_event(request: ReportRequest, result) -> dict:
         "s3_key": result.s3_key,
         "file_name": result.file_name,
         "email_subject": result.email_subject,
+        "language": result.language,
     }

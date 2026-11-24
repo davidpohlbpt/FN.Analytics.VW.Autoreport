@@ -59,15 +59,18 @@ def lambda_handler(event, context):
         file_content = response["Body"].read()
         print(f"LOG: File retrieved ({len(file_content)} bytes)")
 
-        # Send email
+        # Send email; the render step passes the deck language
+        is_english = str(event.get("language") or "DE").upper() == "EN"
+        email_html = settings.email_html_en if is_english else settings.email_html
         send_email(
             [recipient],
             access_token,
             file_content,
             file_name,
             sender_email,
-            settings.email_html.format(
-                dt.date.today().strftime("%d.%m.%Y"), html.escape(brand)
+            email_html.format(
+                dt.date.today().strftime("%d/%m/%Y" if is_english else "%d.%m.%Y"),
+                html.escape(brand),
             ),
             event.get("email_subject")
             or f"BKM IDM Autoreport: Control Center {brand}",

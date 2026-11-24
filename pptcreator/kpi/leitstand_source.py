@@ -34,6 +34,7 @@ import re
 import sqlalchemy as sa
 from pycore.easy import database
 
+from pptcreator.kpi import i18n
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod, Rows
 from pptcreator.kpi.kpi_metric import METRIC_AVG_AGE, KpiMetric
 
@@ -235,21 +236,25 @@ class LeitstandKpiSource:
         commodity_avg: dict[str, str] = {}
         commodity_metric: dict[str, str] = {}
         for row in by_com:
-            com = (row["COM"] or "").strip() or "ohne COM"
+            com = (row["COM"] or "").strip() or i18n.text("no_com", self.language)
             rows = _rows(meta, row)
             if not any(r["value"] for r in rows):
                 continue
             commodity_rows[com] = rows
             if with_avg and row.get("avg_age_days") is not None:
-                commodity_avg[com] = format_age(row["avg_age_days"])
+                commodity_avg[com] = format_age(row["avg_age_days"], self.language)
             if value_metric is not None:
-                commodity_metric[com] = value_metric.format(row["metric_num"], row["metric_den"])
+                commodity_metric[com] = value_metric.format(
+                    row["metric_num"], row["metric_den"], language=self.language
+                )
 
         average_text = (
-            format_age(total["avg_age_days"]) if with_avg and total.get("avg_age_days") is not None else None
+            format_age(total["avg_age_days"], self.language)
+            if with_avg and total.get("avg_age_days") is not None
+            else None
         )
         if value_metric is not None:
-            metric_text = value_metric.format(total["metric_num"], total["metric_den"])
+            metric_text = value_metric.format(total["metric_num"], total["metric_den"], language=self.language)
         elif metric is not None and with_avg:  # avg_age metric: the average is the value
             metric_text, commodity_metric = average_text, dict(commodity_avg)
         else:
@@ -346,16 +351,9 @@ def parse_color(value: str | None, column: str) -> str:
     return f"rgb({r}, {g}, {b})"
 
 
-def format_age(days) -> str:
+def format_age(days, language: str = "DE") -> str:
     """Average age in days -> '2 Jahre, 9 Monate' (frontend headline style)."""
-    months = int(round(float(days) / 30.4375))
-    years, rest = divmod(months, 12)
-    parts = []
-    if years:
-        parts.append("1 Jahr" if years == 1 else f"{years} Jahre")
-    if rest or not years:
-        parts.append("1 Monat" if rest == 1 else f"{rest} Monate")
-    return ", ".join(parts)
+    return i18n.format_age(days, language)
 
 
 def period_bounds(period: ReportPeriod, today: dt.date | None = None) -> tuple[dt.date, dt.date]:

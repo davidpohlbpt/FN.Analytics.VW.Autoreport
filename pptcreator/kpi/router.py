@@ -14,12 +14,14 @@ class RoutingKpiSource:
     to the DQN API.
     """
 
-    def __init__(self, sources: dict[str, KpiSource] | None = None):
+    def __init__(self, sources: dict[str, KpiSource] | None = None, *, language: str = "DE"):
         self._sources: dict[str, KpiSource] = dict(sources or {})
+        self.language = str(getattr(language, "value", language) or "DE").upper()
+        """Language of chart labels and formatted values (the template's language)."""
 
     def source_for(self, name: str) -> KpiSource:
         if name not in self._sources:
-            self._sources[name] = _create(name)
+            self._sources[name] = _create(name, self.language)
         return self._sources[name]
 
     def fetch(
@@ -34,7 +36,7 @@ class RoutingKpiSource:
         return source.fetch(definition, brand, current, reference)
 
 
-def _create(name: str) -> KpiSource:
+def _create(name: str, language: str = "DE") -> KpiSource:
     if name == "stub":
         from pptcreator.kpi.stub_source import StubKpiSource
 
@@ -46,9 +48,9 @@ def _create(name: str) -> KpiSource:
     if name == "frontend":
         from pptcreator.kpi.frontend_source import FrontendKpiSource
 
-        return FrontendKpiSource()
+        return FrontendKpiSource(language=language)
     if name == "leitstand":
         from pptcreator.kpi.leitstand_source import LeitstandKpiSource
 
-        return LeitstandKpiSource()
+        return LeitstandKpiSource(language=language)
     raise ValueError(f"Unknown KPI source {name!r}; expected leitstand, frontend, backend or stub.")

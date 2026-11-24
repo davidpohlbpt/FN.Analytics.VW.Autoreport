@@ -81,10 +81,10 @@ executed against either database during this change.
 |---|---|---|
 | `T_Control_Autoreport_Templates` | what a report is | `template_link` (`s3://bucket/key`), `language`, `target_file_name` (pattern with `{brand} {current} {reference}`), `target_location`, `email_subject` |
 | `T_Control_Autoreport_Mappings` | one row per KPI of a template | `kpi_key`, `kpi_order`, `slide_title`, `slide_subtitle`, `source` (`leitstand`/`frontend`/`backend`/`stub`), DQN ids (`menu_item_id`, `report_id`, `tile_id`, `chart_id`) or `query_key`, `palette_json`, `average_label` (deprecated: only used when the KPI has no row in `T_Control_Autoreport_KpiMetrics`) |
-| `T_Control_Autoreport_KpiMetrics` | value under each donut, per KPI (all brands/templates) | `kpi_key`, `metric_type` (`avg_age`/`percent`/`ratio`/`count`), `numerator_columns` / `denominator_columns` (comma-separated columns of `T_RESULT_Leitstand_Overview`, summed with the donut's filter; `NULL` = donut total), `numerator_not_null_column` (only rows where it is not NULL), `label` (prefix, e.g. `Ø`), `explanation_text` (`{kpi_explanation}` on overview and COM slides), `showed_bkas` (data source wording on both slides), `is_active`. Structured on purpose, no SQL; invalid rows are ignored with a warning. **No active row ⇒ previous behaviour** (`average_label`). Percent `45 %` (whole number), ratio `120 / 30`; no data ⇒ `0 %` / `0 / 0` |
+| `T_Control_Autoreport_KpiMetrics` | value under each donut, per KPI (all brands/templates) | `kpi_key`, `metric_type` (`avg_age`/`percent`/`ratio`/`count`), `numerator_columns` / `denominator_columns` (comma-separated columns of `T_RESULT_Leitstand_Overview`, summed with the donut's filter; `NULL` = donut total), `numerator_not_null_column` (only rows where it is not NULL), `label` (prefix, e.g. `Ø`), `explanation_text_de` / `explanation_text_en` (`{kpi_explanation}` on overview and COM slides, per deck language; empty `_en` falls back to `_de`), `showed_bkas_de` / `showed_bkas_en` (data source wording on both slides), `is_active`. Structured on purpose, no SQL; invalid rows are ignored with a warning. **No active row ⇒ previous behaviour** (`average_label`). Percent `45 %` (whole number), ratio `120 / 30`; no data ⇒ `0 %` / `0 / 0` |
 | `T_Control_Autoreport_Brands` | brand master list (frontend dropdown) | `brand_name` (display), `filter_value` (`EK_ORG` value), `is_active` |
 | `T_Control_Autoreport_BrandCommodities` | per-brand commodity presentation | `brand_id` (FK Brands), `com_source` (`COM` in `T_RESULT_Leitstand_Overview`), `com_label` (headline label, enables renames), `sort_order`, `show_if_zero`, `is_active`. **No active rows for a brand ⇒ default behaviour** (all COMs, source labels/order, zeros skipped). Rows ⇒ whitelist + rename + order + zero-fill |
-| `T_Control_Autoreport_BrandFeatures` | per-brand feature switches | `brand_id` (FK Brands), `feature_key`, `feature_value` (`''` = explicitly off), `is_active`. **No active rows ⇒ feature off.** Supported key: `footnote_text` = text of the template's `{footnote}` token, so only that brand shows a footnote. Unknown keys are ignored with a warning |
+| `T_Control_Autoreport_BrandFeatures` | per-brand feature switches | `brand_id` (FK Brands), `feature_key`, `feature_value` (`''` = explicitly off), `is_active`. **No active rows ⇒ feature off.** Supported keys: `footnote_text_de` / `footnote_text_en` = text of the template's `{footnote}` token per deck language (English falls back to German), so only that brand shows a footnote. Unknown keys are ignored with a warning |
 | `T_Control_Autoreport_Recipients` | one row per deck a user wants; maintained by the frontend | `template_id`, `email`, `brand_name` (frontend value), `brand_id` (resolved by trigger from active brand name or filter value), `report_week` + `comparison_week` (**mandatory**; the dropdown string `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`, or the current-week option `Aktuelle Woche <LAUFKENNUNG> (<LAUF_KW>)`, e.g. `Aktuelle Woche V01-D (46/2026)`; dates `2025-11-28` and `2025-KW46` are accepted too). The current-week option still resolves to the latest run when sending; saved legacy values `Aktuelle Woche` remain supported. The backend splits the run string and finds the snapshot by `LAUFKENNUNG` + `LAUF_KW` in `T_RESULT_Leitstand_Overview`. `send_now = 1` is the only trigger: the 5-minute poller picks those rows. One deck per row, even for identical brand and weeks; two rows with the same brand and weeks write the same file name (later overwrites earlier) |
 | `dbo.V_Autoreport_Recipients` | frontend recipient editor (`001_autoreport_core.sql`) | projects the recipient table, including its computed `RowID` and brand display value |
 | `dbo.V_Autoreport_DropdownValues` | frontend dropdowns (`001_autoreport_core.sql`) | active brands; `report_week` = every run in `T_RESULT_Leitstand_Overview` as `LAUFKENNUNG (LAUF_KW)` plus `Aktuelle Woche <latest LAUFKENNUNG> (<latest LAUF_KW>)`; `comparison_week` = the same without the latest run, `sort_date` = the run's AnalyseZeitpunkt (the frontend sorts by it, newest first, through its data source config `T_CONTROL_Report_DataSourceColumns` (data source 9502, `OrderBy`/`OrderParameter`); a view cannot carry an order). Read live, so a new weekly load appears automatically; snapshots without `LAUFKENNUNG` are not offered |
@@ -439,19 +439,20 @@ templates below the expiring prefix.
   `LAUFKENNUNG (LAUF_KW)`, e.g. `V01-B (46/2025)`; the week label if the run is unknown) and
   `{target_label1|2}` / `{target_text1|2}` (empty for now) filled in. Unknown
   placeholders stay visible. Empty boxes such as `Chart 2 Status` are not rendered.
-- `{footnote}` holds the brand's `footnote_text` from
+- `{footnote}` holds the brand's `footnote_text_de` / `footnote_text_en` (deck language; an
+  English deck without `footnote_text_en` uses the German text) from
   `control.T_Control_Autoreport_BrandFeatures`. It is always substituted: a brand without
   the feature gets an empty string and the shape is removed from the output slide, so no
   literal `{footnote}` and no empty text box ever reaches the deck. Put the token on the
   slides the footnote should appear on; it is currently on slide 2 only.
-- `{kpi_explanation}` holds the KPI's `explanation_text` from
+- `{kpi_explanation}` holds the KPI's `explanation_text_de` / `explanation_text_en` from
   `control.T_Control_Autoreport_KpiMetrics` on overview and COM slides, prefixed with
   `* `. Metric or average values on those charts then end with `*` (e.g. `45 %*`);
   `-` and BKA-count fallbacks are not marked. Put the token on both template slides.
-  For KPIs without a text, the shape is removed.
+  For KPIs without a text, the shape is removed. An empty `_en` text falls back to `_de`.
 - Put `{showed_Bkas}` in place of `alle BKAs` in the data source text on both template
-  slides. It is filled from the KPI metric's `showed_bkas`; a missing, empty or inactive
-  metric defaults to `alle BKAs`. Script 008 sets `alle BKAs mit roten Wochen` for
+  slides. It is filled from the KPI metric's `showed_bkas_de` / `showed_bkas_en`; a missing,
+  empty or inactive metric defaults to `alle BKAs` (English deck: `all BKAs`). Script 008 sets `alle BKAs mit roten Wochen` for
   `rote_bka` and `alle BKAs mit UVB Fehlern` for `uvb_fehlercode`, without overwriting
   existing text. This wording does not change the underlying data filters.
 - S3-backed templates are downloaded for each report, so replacing a template in S3

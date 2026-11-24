@@ -92,6 +92,7 @@ def get_new_recipients(report_conn: object) -> list[dict]:
               SELECT 1
               FROM control.T_Control_Autoreport_Runs run
               WHERE run.status IN ('processing', 'rendered')
+                AND run.template_id = r.template_id
                 AND LOWER(LTRIM(RTRIM(run.recipients))) = LOWER(LTRIM(RTRIM(r.email)))
                 AND run.brand = b.filter_value
                 AND run.current_period = CASE
@@ -132,8 +133,10 @@ def get_new_recipients(report_conn: object) -> list[dict]:
             )
             continue
 
-        # Identical requests found in this same poll are sent only once
-        request_key = (email.lower(), row["brand"], report_week, comparison_week)
+        # Identical requests found in this same poll are sent only once (a DE and an EN deck differ)
+        request_key = (
+            int(row["template_id"]), email.lower(), row["brand"], report_week, comparison_week
+        )
         if request_key in seen:
             print(
                 f"WARNING: Recipient {row['id']} skipped: identical request is already in this run"

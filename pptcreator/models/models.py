@@ -15,7 +15,9 @@ from pptcreator.models.enum import Languages
 #                                    comes from (frontend chart or backend query)
 #   T_Control_Autoreport_Brands      master list of brands (frontend dropdown)
 #   T_Control_Autoreport_Recipients  one row per deck a user wants: template, brand,
-#                                    reference week (mandatory)
+#                                    reference week (mandatory); the frontend sets the
+#                                    language, a trigger resolves template_id from it
+#   T_Control_Autoreport_Texts       non-German versions of KPI/brand texts
 #   T_Control_Autoreport_Runs        audit log written by the Lambdas / state machine
 # ------------------------------------------------------------------------------ #
 
@@ -210,6 +212,33 @@ class AutoreportKpiMetrics(DeclarativeBase):
 
     showed_bkas: Mapped[str | None] = mapped_column(sa.String(200))
     """Data source wording for the template's {showed_Bkas} token"""
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class AutoreportTexts(DeclarativeBase):
+    """Translations of the German texts stored in other control tables, per language.
+
+    The base columns (KpiMetrics.explanation_text / showed_bkas, BrandFeatures
+    'footnote_text') are German; a DE deck never reads this table. A missing row keeps
+    the German text (logged). See pptcreator/kpi/localized_texts.py.
+    """
+
+    __tablename__ = "T_Control_Autoreport_Texts"
+    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    language: Mapped[str] = mapped_column(sa.String(2))
+    """'EN'"""
+
+    text_type: Mapped[str] = mapped_column(sa.String(50))
+    """'kpi_explanation' | 'kpi_showed_bkas' (text_key = kpi_key) or
+    'brand_footnote' (text_key = Brands.filter_value)"""
+
+    text_key: Mapped[str] = mapped_column(sa.String(200))
+
+    text_value: Mapped[str] = mapped_column(sa.String(1000))
 
     is_active: Mapped[bool] = mapped_column(default=True)
 

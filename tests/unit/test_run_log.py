@@ -236,7 +236,7 @@ def test_render_success_does_not_send_an_alert(runs_engine, render_event, monkey
     monkeypatch.setenv("SNS_URL", "arn:aws:sns:eu-west-1:123456789012:render-alerts")
     monkeypatch.setattr(render, "render_deck", Mock(return_value=SimpleNamespace(
         status="rendered", error=None, file_name="deck.pptx", slides=1,
-        size_bytes=100, bucket="reports", s3_key="deck.pptx", email_subject="Report",
+        size_bytes=100, bucket="reports", s3_key="deck.pptx", email_subject="Report", language="DE",
     )))
     client = Mock()
     monkeypatch.setattr(render, "boto3", SimpleNamespace(client=client))

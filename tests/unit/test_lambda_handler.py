@@ -236,8 +236,10 @@ def test_render_output_contains_the_send_email_event(stack):
     out = json.loads(json.dumps(lambda_handler.render_handler(request, None)))  # as passed by Step Functions
 
     assert set(out) == {
-        "recipient", "recipient_id", "run_id", "brand", "bucket", "s3_key", "file_name", "email_subject"
+        "recipient", "recipient_id", "run_id", "brand", "bucket", "s3_key", "file_name", "email_subject",
+        "language",
     }
+    assert out["language"] == "DE"
     assert out["bucket"] == BUCKET
     assert out["s3_key"].startswith("reports/dev/") and out["s3_key"].endswith(".pptx")
     assert out["file_name"] == out["s3_key"].rsplit("/", 1)[1]

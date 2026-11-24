@@ -18,6 +18,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 import pandas as pd
 
+from pptcreator.kpi import i18n
 from pptcreator.models.models import AutoreportKpiMetrics
 from pptcreator.utils.read_data import read_data
 
@@ -77,14 +78,14 @@ class KpiMetric:
             METRIC_COUNT: format_count(0),
         }.get(self.metric_type)
 
-    def format(self, numerator: float | None, denominator: float | None) -> str:
+    def format(self, numerator: float | None, denominator: float | None, *, language: str = "DE") -> str:
         """Format a ratio/percent/count value (avg_age is formatted by the source)."""
         if self.metric_type == METRIC_PERCENT:
             return format_percent(numerator, denominator)
         if self.metric_type == METRIC_RATIO:
-            return format_ratio(numerator, denominator)
+            return format_ratio(numerator, denominator, language=language)
         if self.metric_type == METRIC_COUNT:
-            return format_count(numerator)
+            return format_count(numerator, language=language)
         raise ValueError(f"{self.kpi_key}: {self.metric_type} values are formatted by the source.")
 
     def render(self, text: str) -> str:
@@ -99,13 +100,13 @@ def format_percent(numerator: float | None, denominator: float | None) -> str:
     return f"{int(percent.quantize(Decimal('1'), rounding=ROUND_HALF_UP))} %"
 
 
-def format_ratio(numerator: float | None, denominator: float | None) -> str:
+def format_ratio(numerator: float | None, denominator: float | None, *, language: str = "DE") -> str:
     """'120 / 30' (absolute numbers, not a percentage)."""
-    return f"{format_count(numerator)} / {format_count(denominator)}"
+    return f"{format_count(numerator, language=language)} / {format_count(denominator, language=language)}"
 
 
-def format_count(value: float | None) -> str:
-    return f"{float(value or 0):,.0f}".replace(",", ".")
+def format_count(value: float | None, *, language: str = "DE") -> str:
+    return i18n.format_number(value, language)
 
 
 # ------------------------------------------------------------------------------ #

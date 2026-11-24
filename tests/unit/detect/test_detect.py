@@ -186,6 +186,18 @@ def test_identical_requests_in_one_poll_are_sent_once(detect):
     assert "ELSE LTRIM(RTRIM(r.report_week))" in select
     assert "run.reference_period = LTRIM(RTRIM(r.comparison_week))" in select
     assert "run.recipient_id = r.id" not in select
+    assert "run.template_id = r.template_id" in select
+
+
+def test_german_and_english_deck_of_the_same_request_are_both_sent(detect):
+    module, state = detect
+    english = (43, 2, "a@example.com", "VW PKW", "V01-D (48/2025)", "V03-F (5/2025)")
+    state["connection"] = FakeConnection([_row(42), english])
+
+    module.lambda_handler({}, None)
+
+    payload = json.loads(state["aws"].executions[0]["input"])
+    assert [(item["template_id"], item["recipient_ids"]) for item in payload["requests"]] == [(1, [42]), (2, [43])]
 
 
 @pytest.mark.parametrize("status", ["processing", "rendered"])
@@ -201,7 +213,7 @@ def test_processing_snapshot_blocks_duplicates_with_the_simplified_columns(detec
                 (id INT, template_id INT, email TEXT, brand_id INT,
                  report_week TEXT, comparison_week TEXT, send_now INT, IsDeleted INT);
             CREATE TABLE control.T_Control_Autoreport_Runs
-                (recipient_id INT, recipients TEXT, brand TEXT,
+                (recipient_id INT, template_id INT, recipients TEXT, brand TEXT,
                  current_period TEXT, reference_period TEXT, status TEXT);
             INSERT INTO control.T_Control_Autoreport_Templates VALUES (1, 1);
             INSERT INTO control.T_Control_Autoreport_Brands VALUES (1, 'VW PKW', 1);
@@ -209,7 +221,7 @@ def test_processing_snapshot_blocks_duplicates_with_the_simplified_columns(detec
                 (42, 1, ' a@example.com ', 1, ' Aktuelle Woche V01-D (46/2026) ', ' KW37 ', 1, 0),
                 (43, 1, 'a@example.com', 1, 'V01-D (48/2025)', 'KW38', 1, 0);
             INSERT INTO control.T_Control_Autoreport_Runs VALUES
-                (99, 'A@example.com', 'VW PKW', 'V01-D (48/2025)', 'KW37', 'processing');
+                (99, 1, 'A@example.com', 'VW PKW', 'V01-D (48/2025)', 'KW37', 'processing');
         """)
         connection.execute(
             "UPDATE control.T_Control_Autoreport_Runs SET status = ?", (status,)

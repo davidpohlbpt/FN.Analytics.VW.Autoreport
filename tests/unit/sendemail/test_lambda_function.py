@@ -128,6 +128,7 @@ def test_render_event_sends_report_updates_database_and_deletes_report(handler):
         ["a@example.com"], "token", b"PK", "VW_KPI_Report.pptx", "sender_email", "VW KPI Report Audi"
     )
     assert "Audi &amp; &lt;Test&gt;" in html
+    assert "Lieber IDM-Nutzer" in html
     statements = state["connections"][0].statements
     assert "SET send_now = 0, last_report_time = " in statements[0][0]
     assert statements[0][0].endswith("WHERE id = ?")
@@ -137,6 +138,16 @@ def test_render_event_sends_report_updates_database_and_deletes_report(handler):
     assert state["connections"][0].closed
     assert state["aws"].read == (BUCKET, KEY)
     assert state["aws"].deleted == [(BUCKET, KEY)]
+
+
+def test_english_deck_gets_the_english_email(handler):
+    module, state = handler
+
+    module.lambda_handler(_event(language="EN"), None)
+
+    html = state["sent"][0][5]
+    assert "Dear IDM user" in html and "Lieber" not in html
+    assert "Audi &amp; &lt;Test&gt;" in html
 
 
 def test_send_failure_marks_run_failed_resets_send_now_and_keeps_report(handler):
