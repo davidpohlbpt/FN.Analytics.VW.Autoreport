@@ -4,7 +4,8 @@ import pandas as pd
 import pytest
 
 from pptcreator.kpi.brand_policy import (
-    FEATURE_FOOTNOTE_TEXT,
+    FEATURE_FOOTNOTE_TEXT_DE,
+    FEATURE_FOOTNOTE_TEXT_EN,
     BrandPolicy,
     load_brand_policy,
 )
@@ -77,7 +78,7 @@ def _seed_vw_pkw_policy(
                 {
                     "id": 1,
                     "brand_id": VW_PKW_ID,
-                    "feature_key": FEATURE_FOOTNOTE_TEXT,
+                    "feature_key": FEATURE_FOOTNOTE_TEXT_DE,
                     "feature_value": footnote,
                     "is_active": True,
                 }
@@ -177,6 +178,20 @@ def test_policy_survives_a_missing_table(control_tables):  # noqa: F811
 
 def test_footnote_is_empty_without_a_policy():
     assert BrandPolicy().footnote_text == ""
+
+
+def test_english_deck_uses_the_english_footnote_and_falls_back_to_german(control_tables):  # noqa: F811
+    _seed_vw_pkw_policy(control_tables)
+    assert load_brand_policy("VW PKW", "EN").footnote_text == "Nur sieben COMs."  # no EN row yet
+
+    control_tables.write_table(
+        model=AutoreportBrandFeatures,
+        df=pd.DataFrame([{"id": 2, "brand_id": VW_PKW_ID, "feature_key": FEATURE_FOOTNOTE_TEXT_EN,
+                          "feature_value": "Only seven COMs.", "is_active": True}]),
+    )
+
+    assert load_brand_policy("VW PKW", "EN").footnote_text == "Only seven COMs."
+    assert load_brand_policy("VW PKW").footnote_text == "Nur sieben COMs."
 
 
 def test_brand_ids_are_stable_but_not_relied_on():

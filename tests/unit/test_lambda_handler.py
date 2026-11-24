@@ -15,21 +15,23 @@ from pptx import Presentation
 from pptcreator import lambda_handler
 from pptcreator.config import settings
 from pptcreator.creator.graph_steer_creation_process import current_calendar_week
-from pptcreator.kpi.registry import KPIS
+from pptcreator.kpi.registry import KPIS, as_mapping_rows
 from pptcreator.models.models import (
     AutoreportBrandCommodities,
     AutoreportBrandFeatures,
     AutoreportBrands,
+    AutoreportMappings,
     AutoreportRecipients,
     AutoreportRuns,
+    AutoreportTemplates,
 )
 from pptcreator.utils.read_data import read_data
-from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables  # noqa: F401
+from tests.unit.autoreport_fixtures import TEMPLATE_ID, seed_control_tables, template_rows  # noqa: F401
 from tests.unit.infra.conftest import BUCKET, aws  # noqa: F401
 
 VW_PKW_ID = 42
 
-TEMPLATE = Path(__file__).resolve().parent / "test_data" / "VW_Template_Overview.pptx"
+TEMPLATE = Path(__file__).resolve().parent / "test_data" / "VW_Template_Overview_DE.pptx"
 RESULT_DIR = Path(__file__).resolve().parents[1] / "result"
 TEMPLATE_KEY = "templates/VW_Template_Overview.pptx"
 
@@ -125,6 +127,32 @@ def test_render_handler_kpi_subset(stack):
     )
     assert len(_deck(stack, out["s3_key"]).slides) == 2  # Seat: 7 commodities -> one detail slide
 
+
+def test_english_template_renders_an_english_deck(stack, data_repo):
+    en_key = "templates/VW_Template_Overview_EN.pptx"
+    stack["s3"].put_object(Bucket=BUCKET, Key=en_key, Body=TEMPLATE.with_name("VW_Template_Overview_EN.pptx").read_bytes())
+    en_row = {**template_rows(f"s3://{BUCKET}/{en_key}", f"s3://{BUCKET}/reports/dev")[0],
+              "id": 2, "name": "VW KPI Weekly EN", "language": "EN",
+              "target_file_name": "VW_KPI_Report_{brand}_{current}_vs_{reference}_EN"}
+    data_repo.write_table(model=AutoreportTemplates, df=pd.DataFrame([en_row]))
+    mappings = pd.DataFrame(as_mapping_rows(2, source="stub"))
+    mappings["id"] += 100
+    data_repo.write_table(model=AutoreportMappings, df=mappings)
+
+    out = lambda_handler.render_handler(
+        {"template_id": 2, "brand": "Audi", "current_period": "KW45", "reference_period": "KW37",
+         "recipients": ["a@example.com"], "recipient_ids": [1], "kpi_ids": ["bka_aktualisierung"]},
+        None,
+    )
+
+    assert out["language"] == "EN"
+    assert out["file_name"] == "VW_KPI_Report_Audi_KW45_vs_KW37_EN.pptx"
+    prs = _deck(stack, out["s3_key"])
+    overview = [s.text_frame.text for s in prs.slides[0].shapes if s.has_text_frame]
+    assert any(t.startswith("CW37 – Audi") for t in overview)
+    detail = [s.text_frame.text for s in prs.slides[1].shapes if s.has_text_frame]
+    assert any("Filtered on purchasing organization Audi, all BKAs, CW45" in t for t in detail)
+
 def test_render_handler_output_bucket_env_overrides_template_row(stack, monkeypatch):
     stack["s3"].create_bucket(Bucket="client-output", CreateBucketConfiguration={"LocationConstraint": "eu-central-1"})
     monkeypatch.setattr(settings, "s3_output_bucket", "client-output")
@@ -187,7 +215,7 @@ def test_brand_policy_is_applied_by_render(stack, data_repo):  # noqa: F811
     data_repo.write_table(
         model=AutoreportBrandFeatures,
         df=pd.DataFrame(
-            [{"id": 1, "brand_id": VW_PKW_ID, "feature_key": "footnote_text", "feature_value": "Nur sieben COMs.", "is_active": True}]
+            [{"id": 1, "brand_id": VW_PKW_ID, "feature_key": "footnote_text_de", "feature_value": "Nur sieben COMs.", "is_active": True}]
         ),
     )
     data_repo.write_table(

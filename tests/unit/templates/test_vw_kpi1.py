@@ -4,7 +4,7 @@ from pptcreator.creator.create_ppt.create_charts import parse_rgb
 
 # ------------------------------ CONFIGURE HERE ------------------------------ #
 
-TEMPLATE_NAME = "VW_Template_Overview.pptx"
+TEMPLATE_NAME = "VW_Template_Overview_DE.pptx"
 OUTPUT_NAME = "VW_KPI_Report"
 
 BKA_SUBTITLE = (

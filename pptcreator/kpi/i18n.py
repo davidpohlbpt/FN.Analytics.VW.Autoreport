@@ -2,7 +2,8 @@
 
 Everything else is configured per language elsewhere: slide titles in the template's
 ``T_Control_Autoreport_Mappings`` rows, chart legend labels in ``Translation.dbo.Translation``
-and explanation/footnote texts in ``T_Control_Autoreport_Texts`` (see ``localized_texts``).
+and explanation/footnote texts in the ``_de`` / ``_en`` columns and feature keys of
+``T_Control_Autoreport_KpiMetrics`` and ``T_Control_Autoreport_BrandFeatures``.
 """
 
 from __future__ import annotations

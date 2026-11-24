@@ -17,7 +17,6 @@ from pptcreator.models.enum import Languages
 #   T_Control_Autoreport_Recipients  one row per deck a user wants: template, brand,
 #                                    reference week (mandatory); the frontend sets the
 #                                    language, a trigger resolves template_id from it
-#   T_Control_Autoreport_Texts       non-German versions of KPI/brand texts
 #   T_Control_Autoreport_Runs        audit log written by the Lambdas / state machine
 # ------------------------------------------------------------------------------ #
 
@@ -168,7 +167,7 @@ class AutoreportBrandFeatures(DeclarativeBase):
     )
 
     feature_key: Mapped[str] = mapped_column(sa.String(50))
-    """e.g. 'footnote_text'"""
+    """e.g. 'footnote_text_de' / 'footnote_text_en' (one key per deck language)"""
 
     feature_value: Mapped[str] = mapped_column(sa.String(200))
     """Text/render value of the feature, e.g. the footnote sentence"""
@@ -207,38 +206,17 @@ class AutoreportKpiMetrics(DeclarativeBase):
     label: Mapped[str | None] = mapped_column(sa.String(50))
     """Prefix in front of the value, e.g. 'Ø'; NULL/'' -> value only"""
 
-    explanation_text: Mapped[str | None] = mapped_column(sa.String(500))
-    """Text of the template's {kpi_explanation} token on overview and COM slides"""
+    explanation_text_de: Mapped[str | None] = mapped_column(sa.String(500))
+    """Text of the template's {kpi_explanation} token on overview and COM slides (German deck)"""
 
-    showed_bkas: Mapped[str | None] = mapped_column(sa.String(200))
-    """Data source wording for the template's {showed_Bkas} token"""
+    explanation_text_en: Mapped[str | None] = mapped_column(sa.String(500))
+    """Same for English decks"""
 
-    is_active: Mapped[bool] = mapped_column(default=True)
+    showed_bkas_de: Mapped[str | None] = mapped_column(sa.String(200))
+    """Data source wording for the template's {showed_Bkas} token (German deck)"""
 
-
-class AutoreportTexts(DeclarativeBase):
-    """Translations of the German texts stored in other control tables, per language.
-
-    The base columns (KpiMetrics.explanation_text / showed_bkas, BrandFeatures
-    'footnote_text') are German; a DE deck never reads this table. A missing row keeps
-    the German text (logged). See pptcreator/kpi/localized_texts.py.
-    """
-
-    __tablename__ = "T_Control_Autoreport_Texts"
-    __table_args__ = {"schema": AUTOREPORT_SCHEMA, "extend_existing": True}
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-
-    language: Mapped[str] = mapped_column(sa.String(2))
-    """'EN'"""
-
-    text_type: Mapped[str] = mapped_column(sa.String(50))
-    """'kpi_explanation' | 'kpi_showed_bkas' (text_key = kpi_key) or
-    'brand_footnote' (text_key = Brands.filter_value)"""
-
-    text_key: Mapped[str] = mapped_column(sa.String(200))
-
-    text_value: Mapped[str] = mapped_column(sa.String(1000))
+    showed_bkas_en: Mapped[str | None] = mapped_column(sa.String(200))
+    """Same for English decks"""
 
     is_active: Mapped[bool] = mapped_column(default=True)
 

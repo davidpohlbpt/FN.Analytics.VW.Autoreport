@@ -2,7 +2,7 @@ from pptx import Presentation
 
 # ------------------------------ CONFIGURE HERE ------------------------------ #
 
-TEMPLATE_NAME = "VW_Template_Overview.pptx"
+TEMPLATE_NAME = "VW_Template_Overview_DE.pptx"
 OUTPUT_NAME = "VW_Overview_Report"
 
 # Slide title -- rendered as "<SLIDE_TITLE> - <filter value>"

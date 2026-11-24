@@ -114,11 +114,16 @@ def format_count(value: float | None, *, language: str = "DE") -> str:
 # ------------------------------------------------------------------------------ #
 
 
-def load_kpi_metrics() -> dict[str, KpiMetric]:
-    """kpi_key -> metric of all active, valid rows. A missing table means "none"."""
+def load_kpi_metrics(language: str = "DE") -> dict[str, KpiMetric]:
+    """kpi_key -> metric of all active, valid rows. A missing table means "none".
+
+    ``explanation_text`` / ``showed_bkas`` come from the ``_de`` or ``_en`` column of the deck
+    language; an empty English text falls back to the German one (logged).
+    """
+    suffix = i18n.as_language(language).value.lower()
     try:
         rows = read_data(AutoreportKpiMetrics, ["is_active"], [True])
-    except Exception as exc:  # stage without 005_kpi_metrics.sql
+    except Exception as exc:  # stage without the KpiMetrics table (or not yet migrated by 003)
         logging.warning(f"Could not read T_Control_Autoreport_KpiMetrics: {exc}")
         return {}
     if rows is None or rows.empty:
@@ -137,8 +142,8 @@ def load_kpi_metrics() -> dict[str, KpiMetric]:
                 numerator_not_null_column=_text(row.get("numerator_not_null_column")),
                 denominator_columns=_columns(row.get("denominator_columns")),
                 label=_text(row.get("label")) or "",
-                explanation_text=_text(row.get("explanation_text")) or "",
-                showed_bkas=_text(row.get("showed_bkas")) or "",
+                explanation_text=_localized(row, "explanation_text", suffix),
+                showed_bkas=_localized(row, "showed_bkas", suffix),
             )
         except ValueError as exc:
             logging.warning(f"Ignoring KPI metric row {row.get('id')}: {exc}")
@@ -157,6 +162,16 @@ def attach_metrics(kpis: list, metrics: dict[str, KpiMetric]) -> list:
         dataclasses.replace(kpi, metric=metrics[kpi.id]) if kpi.id in metrics else kpi
         for kpi in kpis
     ]
+
+
+def _localized(row: dict, column: str, suffix: str) -> str:
+    """``<column>_<suffix>``; an empty English text falls back to ``<column>_de``."""
+    text = _text(row.get(f"{column}_{suffix}"))
+    if text is None and suffix != "de":
+        text = _text(row.get(f"{column}_de"))
+        if text:
+            logging.warning(f"{row.get('kpi_key')}: no {column}_{suffix}; using the German text.")
+    return text or ""
 
 
 def _columns(value) -> tuple[str, ...]:

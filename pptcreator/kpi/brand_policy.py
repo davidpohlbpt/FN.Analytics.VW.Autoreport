@@ -20,10 +20,12 @@ from pptcreator.kpi.commodity_policy import CommodityPolicy, load_commodity_poli
 from pptcreator.models.models import AutoreportBrandFeatures, AutoreportBrands
 from pptcreator.utils.read_data import read_data
 
-FEATURE_FOOTNOTE_TEXT = "footnote_text"
-"""Text of the template's ``{footnote}`` token; no row -> empty (shape is dropped)."""
+FEATURE_FOOTNOTE_TEXT_DE = "footnote_text_de"
+FEATURE_FOOTNOTE_TEXT_EN = "footnote_text_en"
+"""Text of the template's ``{footnote}`` token per deck language; no row -> empty (shape is
+dropped). An English deck without an EN row falls back to the German text."""
 
-SUPPORTED_FEATURES = (FEATURE_FOOTNOTE_TEXT,)
+SUPPORTED_FEATURES = (FEATURE_FOOTNOTE_TEXT_DE, FEATURE_FOOTNOTE_TEXT_EN)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -37,16 +39,22 @@ class BrandPolicy:
     features: dict[str, str] = dataclasses.field(default_factory=dict)
     """feature_key -> value; missing key -> the feature is off."""
 
+    language: str = "DE"
+    """Deck language; selects the ``_de`` / ``_en`` variant of language-dependent features."""
+
     @property
     def footnote_text(self) -> str:
-        return self.features.get(FEATURE_FOOTNOTE_TEXT, "")
+        if self.language.upper() == "EN" and FEATURE_FOOTNOTE_TEXT_EN in self.features:
+            return self.features[FEATURE_FOOTNOTE_TEXT_EN]
+        return self.features.get(FEATURE_FOOTNOTE_TEXT_DE, "")
 
 
-def load_brand_policy(brand: str) -> BrandPolicy:
+def load_brand_policy(brand: str, language: str = "DE") -> BrandPolicy:
     """Resolve the policy of one brand (``T_Control_Autoreport_Brands.filter_value``)."""
+    language = str(getattr(language, "value", language) or "DE").upper()
     brand = (brand or "").strip()
     if not brand:
-        return BrandPolicy()
+        return BrandPolicy(language=language)
 
     features = _load_features(brand)
     unknown = sorted(set(features) - set(SUPPORTED_FEATURES))
@@ -54,11 +62,14 @@ def load_brand_policy(brand: str) -> BrandPolicy:
         logging.warning(
             f"Brand {brand!r}: ignoring unsupported feature key(s) {unknown}."
         )
+    if language == "EN" and FEATURE_FOOTNOTE_TEXT_DE in features and FEATURE_FOOTNOTE_TEXT_EN not in features:
+        logging.warning(f"Brand {brand!r}: no {FEATURE_FOOTNOTE_TEXT_EN}; using the German footnote.")
 
     policy = BrandPolicy(
         brand=brand,
         commodities=load_commodity_policy(brand),
         features={k: v for k, v in features.items() if k in SUPPORTED_FEATURES},
+        language=language,
     )
     logging.info(
         f"Brand policy for {brand!r}: "

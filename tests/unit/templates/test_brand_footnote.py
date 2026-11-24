@@ -13,7 +13,7 @@ from pptx import Presentation
 from pptcreator.creator.create_ppt.graph_create_ppt import graph_create_ppt
 from pptcreator.creator.get_config.get_template_config import get_template_config
 from pptcreator.kpi.base import ReportPeriod
-from pptcreator.kpi.brand_policy import FEATURE_FOOTNOTE_TEXT, BrandPolicy
+from pptcreator.kpi.brand_policy import FEATURE_FOOTNOTE_TEXT_DE, BrandPolicy
 from pptcreator.kpi.build_output_slides import build_output_slides, discover_chart_slots
 from pptcreator.kpi.commodity_policy import CommodityEntry, CommodityPolicy
 from pptcreator.kpi.registry import get_kpis
@@ -21,7 +21,7 @@ from pptcreator.kpi.stub_source import StubKpiSource
 from pptcreator.models.enum import Languages
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "test_data"
-TEMPLATE_NAME = "VW_Template_Overview.pptx"
+TEMPLATE_NAME = "VW_Template_Overview_DE.pptx"
 FOOTNOTE_TEXT = "Darstellung auf sieben Commodities begrenzt."
 
 VW_PKW_COMMODITIES = CommodityPolicy(
@@ -96,7 +96,7 @@ def test_vw_pkw_shows_the_footnote_on_the_detail_slide_only(storage, cont):
         BrandPolicy(
             brand="VW PKW",
             commodities=VW_PKW_COMMODITIES,
-            features={FEATURE_FOOTNOTE_TEXT: FOOTNOTE_TEXT},
+            features={FEATURE_FOOTNOTE_TEXT_DE: FOOTNOTE_TEXT},
         ),
     )
 
@@ -122,7 +122,7 @@ def test_empty_footnote_text_removes_the_shape(storage, cont):
         storage,
         cont,
         "SEAT",
-        BrandPolicy(brand="SEAT", features={FEATURE_FOOTNOTE_TEXT: ""}),
+        BrandPolicy(brand="SEAT", features={FEATURE_FOOTNOTE_TEXT_DE: ""}),
     )
 
     for slide in prs.slides:

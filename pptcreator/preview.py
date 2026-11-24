@@ -6,7 +6,7 @@
   string comes from LOCAL_SQLSERVER_CONN_STR in .env).
 * KPI definitions come from ``pptcreator/kpi/registry.py`` -- the control tables
   (T_Control_Autoreport_*) are NOT needed.
-* Template from tests/unit/test_data/VW_Template_Overview.pptx (or --template).
+* Template from tests/unit/test_data/VW_Template_Overview_DE.pptx (or --template).
 * Output: previews/<file>.pptx (gitignored), optionally PNG slides via PowerPoint.
 
 ``--current latest`` picks the newest AnalyseZeitpunkt, ``--reference previous`` the
@@ -24,7 +24,7 @@ import sys
 import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-DEFAULT_TEMPLATE = ROOT / "tests" / "unit" / "test_data" / "VW_Template_Overview.pptx"
+DEFAULT_TEMPLATE = ROOT / "tests" / "unit" / "test_data" / "VW_Template_Overview_DE.pptx"
 DEFAULT_OUT = ROOT / "previews"
 
 

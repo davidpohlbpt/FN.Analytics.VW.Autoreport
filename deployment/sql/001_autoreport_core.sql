@@ -191,8 +191,10 @@ CREATE TABLE control.T_Control_Autoreport_KpiMetrics (
     numerator_not_null_column NVARCHAR(100) NULL,
     denominator_columns       NVARCHAR(500) NULL,
     label                     NVARCHAR(50)  NULL,
-    explanation_text          NVARCHAR(500) NULL,
-    showed_bkas               NVARCHAR(200) NULL,
+    explanation_text_de       NVARCHAR(500) NULL,
+    explanation_text_en       NVARCHAR(500) NULL,
+    showed_bkas_de            NVARCHAR(200) NULL,
+    showed_bkas_en            NVARCHAR(200) NULL,
     is_active                 BIT           NOT NULL CONSTRAINT DF_Autoreport_KpiMetrics_Active DEFAULT 1,
     CONSTRAINT CK_Autoreport_KpiMetrics_Type CHECK (metric_type IN (N'avg_age', N'percent', N'ratio', N'count'))
 );
@@ -323,23 +325,24 @@ WHERE b.filter_value = N'VW PKW'
       WHERE bc.brand_id = b.id AND bc.com_source = v.com_source
   );
 
+-- German texts only; 003_autoreport_english.sql adds the English ones (footnote_text_en, *_en).
 INSERT INTO control.T_Control_Autoreport_BrandFeatures
     (brand_id, feature_key, feature_value, is_active)
-SELECT b.id, N'footnote_text',
+SELECT b.id, N'footnote_text_de',
        N'Hinweis: Die Differenz zwischen Gesamt VW PKW und den COMs ergibt sich durch BKAs die abweichenden COMs (BA, SO, …) zugeordnet sind.',
        1
 FROM control.T_Control_Autoreport_Brands b
 WHERE b.filter_value = N'VW PKW'
   AND NOT EXISTS (
       SELECT 1 FROM control.T_Control_Autoreport_BrandFeatures bf
-      WHERE bf.brand_id = b.id AND bf.feature_key = N'footnote_text'
+      WHERE bf.brand_id = b.id AND bf.feature_key IN (N'footnote_text', N'footnote_text_de')
   );
 
 INSERT INTO control.T_Control_Autoreport_KpiMetrics
     (kpi_key, metric_type, numerator_columns, numerator_not_null_column,
-     denominator_columns, label, explanation_text, showed_bkas, is_active)
+     denominator_columns, label, explanation_text_de, showed_bkas_de, is_active)
 SELECT v.kpi_key, v.metric_type, v.numerator_columns, v.numerator_not_null_column,
-       v.denominator_columns, v.label, v.explanation_text, v.showed_bkas, 1
+       v.denominator_columns, v.label, v.explanation_text_de, v.showed_bkas_de, 1
 FROM (VALUES
     (N'bka_aktualisierung', N'avg_age', NULL, NULL, NULL, N'Ø',
      N'Durchschnittliches BKA Alter seit der letzten Aktualisierung', NULL),
@@ -354,7 +357,7 @@ FROM (VALUES
     (N'kapazitaet_saisonalitaet', N'percent', N'Kap2to5,Kap6to10,KapOver10', NULL, N'y', NULL,
      N'Anteil ≥2 Einträge', NULL)
 ) AS v(kpi_key, metric_type, numerator_columns, numerator_not_null_column,
-       denominator_columns, label, explanation_text, showed_bkas)
+       denominator_columns, label, explanation_text_de, showed_bkas_de)
 WHERE NOT EXISTS (
     SELECT 1 FROM control.T_Control_Autoreport_KpiMetrics m
     WHERE m.kpi_key = v.kpi_key
@@ -364,6 +367,8 @@ COMMIT TRANSACTION;
 DROP TABLE #AutoreportDeploymentConfig;
 GO
 
+-- NOTE: 003_autoreport_english.sql replaces this trigger and both views below with versions
+-- that also handle the recipient language; re-run 003 after re-running this script.
 CREATE OR ALTER TRIGGER control.trg_Autoreport_Recipients_ResolveBrand
 ON control.T_Control_Autoreport_Recipients
 AFTER INSERT, UPDATE

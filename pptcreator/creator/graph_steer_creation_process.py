@@ -26,6 +26,7 @@ from pptcreator.creator.get_config.get_autoreport_config import (
 )
 from pptcreator.creator.get_config.get_kpi_deck_config import ReportRequest, get_kpi_deck_config
 from pptcreator.infra import s3_sync
+from pptcreator.kpi import i18n
 from pptcreator.kpi.base import KpiSource
 from pptcreator.kpi.router import RoutingKpiSource
 
@@ -112,7 +113,7 @@ def render_deck(
     result = RenderResult(status="failed", request=request.to_event())
     try:
         template = template or get_template_config(request.template_id)
-        language = (request.language or template.language).value
+        language = i18n.as_language(request.language or template.language).value
         source = source or RoutingKpiSource(language=language)
         container = settings.storage_container
         logging.info(

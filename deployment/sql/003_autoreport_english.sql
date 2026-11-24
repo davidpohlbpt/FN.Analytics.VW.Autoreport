@@ -3,8 +3,10 @@
 -- Idempotent: safe to re-run. Fresh setups run 001 -> 002 -> 003.
 --
 -- What it does:
---   1. control.T_Control_Autoreport_Texts: English versions of the German KPI explanation,
---      data source and brand footnote texts (KpiMetrics / BrandFeatures stay German).
+--   1. Language-specific texts in the existing tables (breaking rename, deploy the code together):
+--        KpiMetrics:    explanation_text -> explanation_text_de, showed_bkas -> showed_bkas_de,
+--                       new explanation_text_en / showed_bkas_en (filled with English texts)
+--        BrandFeatures: feature_key 'footnote_text' -> 'footnote_text_de', new 'footnote_text_en'
 --   2. A second template 'IDM Control Center Weekly EN' (language EN, English .pptx) with
 --      the same six KPIs as the German template and English slide titles.
 --   3. Recipients get a 'language' column (DE/EN, default DE). The trigger resolves
@@ -21,7 +23,7 @@ IF OBJECT_ID(N'tempdb..#AutoreportEnglishConfig') IS NOT NULL
 CREATE TABLE #AutoreportEnglishConfig (template_link_en NVARCHAR(1000) NOT NULL);
 -- >>> SET THIS VALUE: S3 URI of the uploaded English template <<<
 INSERT INTO #AutoreportEnglishConfig (template_link_en)
-VALUES (N'__SET_EN_TEMPLATE_S3_URI__');
+VALUES (N's3://dqn-ingestion-bucket-int/VW-autoreport/templates/VW_Template_Overview_EN.pptx');
 -- INT e.g. s3://dqn-ingestion-bucket-int/VW-autoreport/templates/VW_Template_Overview_EN.pptx
 
 -- A THROW only stops its own batch. On a failed check, NOEXEC ON makes SQL Server skip every
@@ -59,17 +61,16 @@ IF NOT EXISTS (SELECT 1 FROM #AutoreportEnglishConfig
                WHERE LEFT(template_link_en, 2) <> N'__' AND template_link_en LIKE N's3://%')
     THROW 50300, 'Set the English template_link (s3://...) in this script before execution.', 1;
 
-IF OBJECT_ID(N'control.T_Control_Autoreport_Texts', N'U') IS NULL
-CREATE TABLE control.T_Control_Autoreport_Texts (
-    id         INT IDENTITY(1,1) PRIMARY KEY,
-    language   NVARCHAR(2)    NOT NULL CONSTRAINT CK_Autoreport_Texts_Lang CHECK (language IN (N'DE', N'EN')),
-    text_type  NVARCHAR(50)   NOT NULL CONSTRAINT CK_Autoreport_Texts_Type
-                              CHECK (text_type IN (N'kpi_explanation', N'kpi_showed_bkas', N'brand_footnote')),
-    text_key   NVARCHAR(200)  NOT NULL,
-    text_value NVARCHAR(1000) NOT NULL,
-    is_active  BIT            NOT NULL CONSTRAINT DF_Autoreport_Texts_Active DEFAULT 1,
-    CONSTRAINT UQ_Autoreport_Texts UNIQUE (language, text_type, text_key)
-);
+IF COL_LENGTH(N'control.T_Control_Autoreport_KpiMetrics', N'explanation_text') IS NOT NULL
+   AND COL_LENGTH(N'control.T_Control_Autoreport_KpiMetrics', N'explanation_text_de') IS NULL
+    EXEC sp_rename N'control.T_Control_Autoreport_KpiMetrics.explanation_text', N'explanation_text_de', N'COLUMN';
+IF COL_LENGTH(N'control.T_Control_Autoreport_KpiMetrics', N'showed_bkas') IS NOT NULL
+   AND COL_LENGTH(N'control.T_Control_Autoreport_KpiMetrics', N'showed_bkas_de') IS NULL
+    EXEC sp_rename N'control.T_Control_Autoreport_KpiMetrics.showed_bkas', N'showed_bkas_de', N'COLUMN';
+IF COL_LENGTH(N'control.T_Control_Autoreport_KpiMetrics', N'explanation_text_en') IS NULL
+    ALTER TABLE control.T_Control_Autoreport_KpiMetrics ADD explanation_text_en NVARCHAR(500) NULL;
+IF COL_LENGTH(N'control.T_Control_Autoreport_KpiMetrics', N'showed_bkas_en') IS NULL
+    ALTER TABLE control.T_Control_Autoreport_KpiMetrics ADD showed_bkas_en NVARCHAR(200) NULL;
 
 IF COL_LENGTH(N'control.T_Control_Autoreport_Recipients', N'language') IS NULL
     ALTER TABLE control.T_Control_Autoreport_Recipients
@@ -142,22 +143,35 @@ WHERE de.template_id = @de_id
   AND NOT EXISTS (SELECT 1 FROM control.T_Control_Autoreport_Mappings m
                   WHERE m.template_id = @en_id AND m.kpi_key = de.kpi_key);
 
-INSERT INTO control.T_Control_Autoreport_Texts (language, text_type, text_key, text_value, is_active)
-SELECT N'EN', v.text_type, v.text_key, v.text_value, 1
-FROM (VALUES
-    (N'kpi_explanation', N'bka_aktualisierung', N'Average BKA age since the last update'),
-    (N'kpi_explanation', N'bka_bearbeitungsstatus', N'Share of synchronous BKAs (confirmed on both sides)'),
-    (N'kpi_explanation', N'uvb_fehlercode', N'Share of grey BKAs'),
-    (N'kpi_explanation', N'rote_bka', N'Number of red BKAs / BKA >53W'),
-    (N'kpi_explanation', N'bka_abgleichstatus', N'Share of red BKAs'),
-    (N'kpi_explanation', N'kapazitaet_saisonalitaet', N'Share ≥2 entries'),
-    (N'kpi_showed_bkas', N'uvb_fehlercode', N'all BKAs with UVB errors'),
-    (N'kpi_showed_bkas', N'rote_bka', N'all BKAs with red weeks'),
-    (N'brand_footnote', N'VW PKW',
-     N'Note: The difference between total VW PKW and the COMs results from BKAs that are assigned to other COMs (BA, SO, …).')
-) AS v(text_type, text_key, text_value)
-WHERE NOT EXISTS (SELECT 1 FROM control.T_Control_Autoreport_Texts t
-                  WHERE t.language = N'EN' AND t.text_type = v.text_type AND t.text_key = v.text_key);
+-- English KPI texts; only empty fields are filled, so manual corrections survive a re-run
+UPDATE m
+   SET explanation_text_en = COALESCE(m.explanation_text_en, v.explanation_text_en),
+       showed_bkas_en      = COALESCE(m.showed_bkas_en, v.showed_bkas_en)
+FROM control.T_Control_Autoreport_KpiMetrics m
+JOIN (VALUES
+    (N'bka_aktualisierung', N'Average BKA age since the last update', NULL),
+    (N'bka_bearbeitungsstatus', N'Share of synchronous BKAs (confirmed on both sides)', NULL),
+    (N'uvb_fehlercode', N'Share of grey BKAs', N'all BKAs with UVB errors'),
+    (N'rote_bka', N'Number of red BKAs / BKA >53W', N'all BKAs with red weeks'),
+    (N'bka_abgleichstatus', N'Share of red BKAs', NULL),
+    (N'kapazitaet_saisonalitaet', N'Share ≥2 entries', NULL)
+) AS v(kpi_key, explanation_text_en, showed_bkas_en) ON v.kpi_key = m.kpi_key
+WHERE (m.explanation_text_en IS NULL AND v.explanation_text_en IS NOT NULL)
+   OR (m.showed_bkas_en IS NULL AND v.showed_bkas_en IS NOT NULL);
+
+-- Footnote per language: the existing German key gets the _de suffix, English is added
+UPDATE control.T_Control_Autoreport_BrandFeatures
+   SET feature_key = N'footnote_text_de'
+ WHERE feature_key = N'footnote_text';
+
+INSERT INTO control.T_Control_Autoreport_BrandFeatures (brand_id, feature_key, feature_value, is_active)
+SELECT b.id, N'footnote_text_en',
+       N'Note: The difference between total VW PKW and the COMs results from BKAs that are assigned to other COMs (BA, SO, …).',
+       1
+FROM control.T_Control_Autoreport_Brands b
+WHERE b.filter_value = N'VW PKW'
+  AND NOT EXISTS (SELECT 1 FROM control.T_Control_Autoreport_BrandFeatures bf
+                  WHERE bf.brand_id = b.id AND bf.feature_key = N'footnote_text_en');
 
 COMMIT TRANSACTION;
 GO
@@ -333,8 +347,10 @@ SELECT t.language, COUNT(*) AS active_kpi_mappings
 FROM control.T_Control_Autoreport_Mappings m
 JOIN control.T_Control_Autoreport_Templates t ON t.id = m.template_id
 WHERE m.is_active = 1 GROUP BY t.language;
-SELECT language, text_type, COUNT(*) AS texts FROM control.T_Control_Autoreport_Texts
-GROUP BY language, text_type;
+SELECT kpi_key, explanation_text_de, explanation_text_en, showed_bkas_de, showed_bkas_en
+FROM control.T_Control_Autoreport_KpiMetrics WHERE is_active = 1 ORDER BY kpi_key;
+SELECT brand_id, feature_key, feature_value FROM control.T_Control_Autoreport_BrandFeatures
+WHERE feature_key LIKE N'footnote_text%' ORDER BY brand_id, feature_key;
 SELECT language, template_id, COUNT(*) AS recipients
 FROM control.T_Control_Autoreport_Recipients WHERE IsDeleted = 0 GROUP BY language, template_id;
 SELECT ReportDataSourceColumnsID, ColumnName, DisplayOrder, ValueSourceColumnId

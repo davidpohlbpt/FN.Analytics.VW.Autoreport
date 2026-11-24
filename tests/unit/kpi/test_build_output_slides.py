@@ -6,7 +6,7 @@ from pptx.util import Inches
 
 from pptcreator.creator.create_ppt.create_text_fields import create_text_fields
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod
-from pptcreator.kpi.brand_policy import FEATURE_FOOTNOTE_TEXT, BrandPolicy
+from pptcreator.kpi.brand_policy import FEATURE_FOOTNOTE_TEXT_DE, BrandPolicy
 from pptcreator.kpi.kpi_metric import KpiMetric
 from pptcreator.kpi.build_output_slides import (
     DETAIL_SLIDE,
@@ -140,7 +140,7 @@ def test_footnote_text_comes_from_the_brand_policy():
     slides = build_output_slides(
         [_result(["BC"])],
         template_slots=TEMPLATE_SLOTS,
-        brand_policy=BrandPolicy(brand="VW PKW", features={FEATURE_FOOTNOTE_TEXT: footnote}),
+        brand_policy=BrandPolicy(brand="VW PKW", features={FEATURE_FOOTNOTE_TEXT_DE: footnote}),
     )
     assert {s["text_values"]["footnote"] for s in slides} == {footnote}
 
