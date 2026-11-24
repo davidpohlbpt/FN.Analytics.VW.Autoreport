@@ -134,8 +134,8 @@ JOIN (VALUES
      N'Which UVB errors occur in the grey BKAs?'),
     (N'rote_bka', N'Red BKAs', N'Red BKAs',
      N'Which BKAs have more than 10 red weeks?'),
-    (N'bka_abgleichstatus', N'BKA by reconciliation status', N'BKA by reconciliation status',
-     N'What is the supply situation according to the demand-capacity reconciliation?'),
+    (N'bka_abgleichstatus', N'BKA by Matching status', N'BKA by Matching status',
+     N'What is the situation according to the demand-capacity matching status?'),
     (N'kapazitaet_saisonalitaet', N'Seasonality of capacities', N'Seasonality in BKAs',
      N'How many different capacity entries are there in the BKAs?')
 ) AS v(kpi_key, kpi_name, slide_title, slide_subtitle) ON v.kpi_key = de.kpi_key
