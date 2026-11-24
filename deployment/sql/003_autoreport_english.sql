@@ -302,7 +302,7 @@ INSERT INTO dbo.T_CONTROL_Report_DataSourceColumns
 SELECT v.*
 FROM (VALUES
     (950205, N'language', N'string', 0, 0, 0, N'TN_AutoReport_Language', NULL, NULL, NULL, NULL, 0, 9502, 5, NULL, 0, NULL, NULL, NULL),
-    (950107, N'language', N'string', 1, 1, 1, N'TN_AutoReport_Language', NULL, NULL, NULL, NULL, 1, 9501, 5, NULL, 0, NULL, NULL, 950205)
+    (950107, N'language', N'dropdown', 1, 1, 1, N'TN_AutoReport_Language', NULL, NULL, NULL, NULL, 1, 9501, 5, NULL, 0, NULL, NULL, 950205)
 ) AS v(ReportDataSourceColumnsID, ColumnName, DataType, Displayed, Sortable, Filterable,
        ColumnNameTranslationKey, LineBreak, ColumnStyle, NumberLocaleFormat, CurrencyTK,
        Editable, ReportDataSourceID, DisplayOrder, ColorCoded, OrderBy, OrderParameter,
@@ -324,8 +324,8 @@ WHERE NOT EXISTS (SELECT 1 FROM dbo.T_CONTROL_Report_DataSourceColumnsValidation
 DECLARE @tk TABLE (LanguageCode NVARCHAR(5), TranslationKey NVARCHAR(200), Value NVARCHAR(MAX));
 INSERT INTO @tk (LanguageCode, TranslationKey, Value)
 VALUES
-    (N'EN', N'TN_AutoReport_Language', N'Report language'),
-    (N'DE', N'TN_AutoReport_Language', N'Berichtssprache'),
+    (N'EN', N'TN_AutoReport_Language', N'Language'),
+    (N'DE', N'TN_AutoReport_Language', N'Sprache'),
     (N'EN', N'TN_Helptext_AutoReportRecipients_Main_Table', N'Brand, reporting week, comparison week and report language (DE/EN) must be chosen from the allowed values.'),
     (N'DE', N'TN_Helptext_AutoReportRecipients_Main_Table', N'Marke, Berichtswoche, Vergleichswoche und Berichtssprache (DE/EN) müssen aus den erlaubten Werten gewählt werden.');
 

@@ -42,11 +42,10 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 10px 0 10px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                im Anhang findest du den automatisch erstellten Report aus dem IDM Control Center für die Einkaufsorganisation {1}.
+                                im Anhang erhältst du den automatisch erstellten Report aus dem IDM Control Center für die Einkaufsorganisation {1}.
                                 <br> <br>
-                                Weitere Informationen und Details findest du direkt im IDM Control Center.
-                                Die Report-Einstellungen, wie Einkaufsorganisation und Betrachtungszeiträume, lassen sich
-                                eigenständig im BKM IDM anpassen.
+                                Weitere Informationen und detaillierte Auswertungen stehen dir direkt im IDM Control Center zur Verfügung.
+                                Die Einstellungen für den automatischen Report, beispielsweise Einkaufsorganisation und Betrachtungszeitraum, kannst du jederzeit selbstständig im BKM IDM anpassen.
                             </td>
                         </tr>
                         <tr>
@@ -65,11 +64,10 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 10px 0 10px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                Bei Fragen oder Unterstützungsbedarf erreichst du das BKM IDM Team per E-Mail oder über unsere Wiki-Seite:
+                                Bei Fragen oder Unterstützungsbedarf erreichst du das BKM IDM Team per E-Mail:
                                 <br> <br>
                                 <strong>Support:</strong>
                                 <a href="mailto:bkm.input.data.monitor.vwag.r.wob1@volkswagen.de">BKM IDM MailBox</a> |
-                                <a href="https://volkswagen-net.de/wikis/pages/viewpage.action?pageId=837027503">FAQ Wiki</a>
                                 <br> <br>
                                 <strong>Hinweis:</strong> Diese E-Mail wurde automatisch erstellt. Antworten auf diese E-Mail werden nicht bearbeitet.
                             </td>
@@ -84,7 +82,7 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left;padding: 0px 0 25px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                BKM Input Data Monitor Team
+                                Dein BKM IDM Team
 
                             </td>
                         </tr>
@@ -151,11 +149,10 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 10px 0 10px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                attached you will find the automatically generated report from the IDM Control Center for the purchasing organization {1}.
+                                Please find attached the automatically generated report from the IDM Control Center for the {1} purchasing organization.
                                 <br> <br>
-                                Further information and details are available directly in the IDM Control Center.
-                                You can adjust the report settings, such as purchasing organization and reporting periods,
-                                yourself in BKM IDM.
+                                Further information and detailed analyses are available directly in the IDM Control Center.
+                                You can adjust the settings for your automated report, such as the purchasing organization and reporting period, at any time in BKM IDM.
                             </td>
                         </tr>
                         <tr>
@@ -174,11 +171,10 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left; padding: 10px 0 10px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                If you have any questions or need support, you can reach the BKM IDM team by e-mail or via our wiki page:
+                                If you have any questions or need support, you can reach the BKM IDM team by e-mail:
                                 <br> <br>
                                 <strong>Support:</strong>
                                 <a href="mailto:bkm.input.data.monitor.vwag.r.wob1@volkswagen.de">BKM IDM MailBox</a> |
-                                <a href="https://volkswagen-net.de/wikis/pages/viewpage.action?pageId=837027503">FAQ Wiki</a>
                                 <br> <br>
                                 <strong>Note:</strong> This e-mail was generated automatically. Replies to this e-mail will not be processed.
                             </td>
@@ -193,7 +189,7 @@ class Settings:
                         <tr>
                             <td
                                 style="text-align:left;padding: 0px 0 25px 0;font-size:12px;line-height:14px;font-family:Calibri, sans-serif">
-                                BKM Input Data Monitor Team
+                                Your BKM IDM Team
 
                             </td>
                         </tr>
