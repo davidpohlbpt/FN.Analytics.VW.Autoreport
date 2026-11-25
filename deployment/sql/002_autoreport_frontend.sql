@@ -138,8 +138,7 @@ SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Text ON;
 INSERT INTO dbo.T_CONTROL_Layout_Text (TextId, TileID, Content)
 VALUES (9501, 9501, N'TN_AutoReportRecipients_Info
 <div align="left"><img alt="Not Found" src="https://volkswagen-net.de/wikis/download/attachments/2755133687/VW_autoreport_tutorial_DE.png?version=1&modificationDate=1795439797000&api=v2" width="75%" height="75%">
-<p><br></p>
-TN_AutoReportRecipients_Explanation');
+<p><br></p>');
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Text OFF;
 
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Table ON;
@@ -173,26 +172,33 @@ VALUES
     (N'EN', N'TN_Helptext_AutoReportRecipients_Main_Table', N'Brand, reporting week and comparison week must be chosen from the allowed values.'),
     (N'DE', N'TN_Helptext_AutoReportRecipients_Main_Table', N'Marke, Berichtswoche und Vergleichswoche müssen aus den erlaubten Werten gewählt werden.'),
     (N'EN', N'TN_AutoReportRecipients_Main_Info', N'<p><br></p>
-<big>
-<p>In this table, you can specify the recipients to whom the Data Quality Report will be sent. Each user can configure their own Control Center Report and select the desired purchasing organization as well as the reporting and comparison week. If you activate “Request Report”, the report will be sent by email within five minutes.</p>
-<br>
-<p><strong>You can add or modify entries using the “Edit” button. Please only edit your own entries.</strong></p>
-<br>
-<p>The “Last Sent” column is filled automatically. Please leave this field empty when adding a new recipient.</p>
-</big>
-<p><br></p>
-<h3><br></h3>'),
+    <big>
+    <p>Using this table, you can request a <strong>Control Center report for a specific reporting week and purchasing organization</strong>. Each user can configure their report individually and will receive it <strong>by email within five minutes</strong>.</p>
+    <br>
+    <p>If you would like to create a new entry or edit an existing one, follow these three steps:</p>
+    <br>
+    <p><strong>Step 1:</strong> Use the button in the top-right corner to switch to <strong>Edit Mode</strong>.</p>
+    <p><strong>Step 2:</strong> Use the <strong>plus icon</strong> to create a new entry or edit an existing one. Enter your email address and select the purchasing organization, reporting week, and comparison week. Then activate <strong>“Request Report”</strong> and save your changes.</p>
+    <p><strong>Step 3:</strong> Check that your information is correct and that <strong>“Request Report”</strong> is activated. The report will be sent by email within approximately five minutes. After the report has been sent, the request will automatically be reset and the date under <strong>“Last Sent”</strong> will be updated.</p>
+    <br>
+    <p><strong>Note:</strong> Please only edit your own entries.</p>
+    </big>
+    <p><br></p>
+    <h3><br></h3>'),
     (N'DE', N'TN_AutoReportRecipients_Main_Info', N'<p><br></p>
-<big>
-<p>In dieser Tabelle legen Sie fest, an welche Empfänger der Datenqualitätsbericht gesendet wird. Jeder Nutzer kann einen eigenen Control-Center-Bericht konfigurieren und die gewünschte Einkaufsorganisation sowie die Berichts- und Vergleichswoche auswählen. Wenn Sie „Auswertung anfordern“ aktivieren, wird der Bericht innerhalb von fünf Minuten per E-Mail versendet.</p>
-<br>
-<p><strong>Über die Schaltfläche „Bearbeiten“ können Sie Einträge hinzufügen oder ändern. Bitte bearbeiten Sie nur Ihre eigenen Einträge.</strong> Prüfen Sie zunächst über die Suchleiste in der Spalte „E-Mail“, ob die betreffende E-Mail-Adresse bereits vorhanden ist. Falls ja, ändern Sie bitte den bestehenden Eintrag, statt einen neuen anzulegen.</p>
-<br>
-<p>Die Spalte „Letzter Versand“ wird automatisch befüllt. Lassen Sie dieses Feld beim Anlegen eines Empfängers leer.</p>
-
-</big>
-<p><br></p>
-<h3><br></h3>'),
+    <big>
+    <p>Über diese Tabelle können Sie eine <strong>Control-Center-Auswertung für eine bestimmte Berichtswoche und Einkaufsorganisation anfordern</strong>. Jeder Nutzer kann seine Auswertung individuell konfigurieren und erhält den Bericht <strong>innerhalb von fünf Minuten per E-Mail</strong>.</p>
+    <br>
+    <p>Wenn Sie einen neuen Eintrag anlegen oder einen bestehenden Eintrag bearbeiten möchten, folgen Sie diesen drei Schritten:</p>
+    <br>
+    <p><strong>Schritt 1:</strong> Wechseln Sie über die Schaltfläche oben rechts in den <strong>Editier-Modus</strong>.</p>
+    <p><strong>Schritt 2:</strong> Legen Sie über das <strong>Plus-Symbol</strong> einen neuen Eintrag an oder bearbeiten Sie einen bestehenden Eintrag. Geben Sie Ihre E-Mail-Adresse ein und wählen Sie die Einkaufsorganisation, Berichtswoche und Vergleichswoche aus. Aktivieren Sie anschließend <strong>„Auswertung anfordern“</strong> und speichern Sie Ihre Änderungen.</p>
+    <p><strong>Schritt 3:</strong> Prüfen Sie, ob Ihre Angaben korrekt sind und <strong>„Auswertung anfordern“</strong> aktiviert ist. Der Bericht wird innerhalb von etwa fünf Minuten per E-Mail versendet. Nach dem Versand wird die Anforderung automatisch zurückgesetzt und das Datum unter <strong>„Letzter Versand“</strong> aktualisiert.</p>
+    <br>
+    <p><strong>Hinweis:</strong> Bitte bearbeiten Sie nur Ihre eigenen Einträge.</p>
+    </big>
+    <p><br></p>
+    <h3><br></h3>'),
     (N'EN', N'TN_Brand', N'Purchasing organization'),
     (N'DE', N'TN_Brand', N'Einkaufsorganisation'),
     (N'EN', N'TN_Berichtswoche', N'Reporting week'),
@@ -209,20 +215,6 @@ VALUES
     (N'DE', N'TN_InvalidWeek', N'Bitte wählen Sie eine Woche aus der Liste.'),
     (N'EN', N'TN_EmailValidationAutoReport', N'Please enter a valid e-mail address.'),
     (N'DE', N'TN_EmailValidationAutoReport', N'Bitte tragen Sie eine gültige E-Mail-Adresse ein.'),
-    (N'EN', N'TN_AutoReportRecipients_Explanation', N'<p><strong>Step 1:</strong> Switch to edit mode.</p>
-
-<p><strong>Step 2:</strong> To add a new entry, click the plus icon in the top-right corner. Enter your email address and select the purchasing organization, reporting week, and comparison week from the dropdown menus. Then select the <strong>“Send report”</strong> checkbox to request the report by email.</p>
-
-<p>To edit an existing entry, double-click the relevant row. Save your changes by double-clicking the <strong>“Save”</strong> button.</p>
-
-<p><strong>Step 3:</strong> Check that your entry matches the example and that <strong>“Send report”</strong> is selected. After you save, the report is usually sent by email within about five minutes. Once it has been sent, the checkbox is cleared automatically. To request another report, simply select it again. If you don’t receive an email, check your details and contact us if needed.</p>'),
-    (N'DE', N'TN_AutoReportRecipients_Explanation', N'<p><strong>Schritt 1:</strong> Wechseln Sie in den Editier modus.</p>
-
-<p><strong>Schritt 2:</strong> Um einen neuen Eintrag anzulegen, klicken Sie oben rechts auf das Plus-Symbol. Geben Sie Ihre E-Mail-Adresse ein und wählen Sie die Einkaufsorganisation sowie die Berichts- und Vergleichswoche über die Dropdown-Menüs aus. Klicken Sie anschließend das Kästchen <strong>„Auswertung anfordern“</strong>, damit der Report erstellt und per E-Mail versendet wird.</p>
-
-<p>Um einen bestehenden Eintrag zu ändern, doppelklicken Sie auf die entsprechende Zeile. Speichern Sie Ihre Änderungen mit einem Doppelklick auf die Schaltfläche <strong>„Speichern“</strong>.</p>
-
-<p><strong>Schritt 3:</strong> Prüfen Sie, ob Ihr Eintrag wie im Beispiel aussieht und das Kontrollkästchen <strong>„Auswertung anfordern“</strong> aktiviert ist. Nach dem Speichern wird der Report in der Regel innerhalb von etwa fünf Minuten per E-Mail versendet. Nachdem der Report gesendet wird, wird der Haken von „Auswertung anfordern“ entfernt. Bei erneuter Anfrage können Sie einfach wieder den Haken setzen.Falls Sie keine E-Mail erhalten, prüfen Sie Ihre Angaben und wenden Sie sich bei Bedarf an uns.</p>'),
     (N'EN', N'TN_InvalidSelection', N'Invalid selection'),
     (N'DE', N'TN_InvalidSelection', N'Ungültige Auswahl');
 
