@@ -97,9 +97,9 @@ INSERT INTO dbo.T_CONTROL_Report_DataSourceColumns
 VALUES
     (950100, N'RowID',             N'numeric',   0, 1, 1, N'RowId',              NULL, NULL, NULL, NULL, 0, 9501, 0, NULL, 0, NULL, 1, NULL),
     (950101, N'email',             N'string',    1, 1, 1, N'TN_Email',           NULL, NULL, NULL, NULL, 1, 9501, 1, NULL, 1, N'ASC', NULL, NULL),
-    (950102, N'brand_name',        N'string',  1, 1, 1, N'TN_Brand',           NULL, NULL, NULL, NULL, 1, 9501, 2, NULL, 0, NULL, NULL, 950201),
-    (950103, N'report_week',       N'string',  1, 1, 1, N'TN_Berichtswoche',   NULL, NULL, NULL, NULL, 1, 9501, 3, NULL, 0, NULL, NULL, 950202),
-    (950104, N'comparison_week',   N'string',  1, 1, 1, N'TN_Abgleichswoche',  NULL, NULL, NULL, NULL, 1, 9501, 4, NULL, 0, NULL, NULL, 950203),
+    (950102, N'brand_name',        N'dropdown',  1, 1, 1, N'TN_Brand',           NULL, NULL, NULL, NULL, 1, 9501, 2, NULL, 0, NULL, NULL, 950201),
+    (950103, N'report_week',       N'dropdown',  1, 1, 1, N'TN_Berichtswoche',   NULL, NULL, NULL, NULL, 1, 9501, 3, NULL, 0, NULL, NULL, 950202),
+    (950104, N'comparison_week',   N'dropdown',  1, 1, 1, N'TN_Abgleichswoche',  NULL, NULL, NULL, NULL, 1, 9501, 4, NULL, 0, NULL, NULL, 950203),
     (950105, N'send_now',          N'boolean',   1, 1, 1, N'TN_SendNow',         NULL, NULL, NULL, NULL, 1, 9501, 5, NULL, 0, NULL, NULL, NULL),
     (950106, N'last_report_time',  N'datetime',  1, 1, 1, N'TN_LastReportTime',  NULL, NULL, NULL, NULL, 0, 9501, 6, NULL, 0, NULL, NULL, NULL),
     (950201, N'brand_name',        N'string',    0, 1, 0, N'TN_Brand',           NULL, NULL, NULL, NULL, 0, 9502, 1, NULL, 1, N'ASC', NULL, NULL),
@@ -136,7 +136,7 @@ SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Tiles OFF;
 
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Text ON;
 INSERT INTO dbo.T_CONTROL_Layout_Text (TextId, TileID, Content)
-VALUES (9501, 9501, N'TN_AutoReportRecipients_Info
+VALUES (9501, 9501, N'TN_AutoReportRecipients_Main_Info
 <div align="left"><img alt="Not Found" src="https://volkswagen-net.de/wikis/download/attachments/2755133687/VW_autoreport_tutorial_DE.png?version=1&modificationDate=1795439797000&api=v2" width="75%" height="75%">
 <p><br></p>');
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Text OFF;
@@ -149,12 +149,18 @@ INSERT INTO dbo.T_CONTROL_Layout_Table
 VALUES (9501, 950, 0, NULL, NULL, NULL, 1, NULL, 9501, 0, 1, 1, 9502);
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Table OFF;
 
+-- OptionID 30 is TablePageSize and must be numeric; a claim string here breaks the grid.
 INSERT INTO dbo.T_CONTROL_Layout_TileOption (TileID, OptionID, Value)
 VALUES (9502, 7, N'1'),
        (9502, 17, N'ConfirmationDialogDelete'),
        (9502, 28, N'AutoReportRecipientsClaim'),
        (9502, 29, N'AutoReportRecipientsClaim'),
-       (9502, 30, N'AutoReportRecipientsClaim');
+       (9502, 30, N'10');
+
+INSERT INTO dbo.T_CONTROL_Layout_TileOption (TileID, OptionID, Value)
+SELECT 9502, 27, N'AutoReportRecipientsClaim'
+WHERE NOT EXISTS (SELECT 1 FROM dbo.T_CONTROL_Layout_TileOption
+                  WHERE TileID = 9502 AND OptionID = 27);
 
 DECLARE @tk TABLE (
     LanguageCode NVARCHAR(5),
