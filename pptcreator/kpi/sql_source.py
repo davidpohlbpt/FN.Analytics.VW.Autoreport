@@ -22,39 +22,48 @@ import os
 
 import pandas as pd
 import sqlalchemy as sa
-from pycore.easy import database
 
 from pptcreator.kpi.base import KpiDefinition, KpiResult, KpiSnapshot, ReportPeriod, Rows
+from pptcreator.utils.db import engine_for
 
 KPI_TABLE = os.getenv("KPI_TABLE", "control.T_Autoreport_KpiValues")
+KPI_SERVER = os.getenv("KPI_SERVER", "secondary")
+"""'secondary' -> LOCAL_SQLSERVER_CONN_STR_2 (MasterDataDB on PROD); 'primary' -> ReportDB."""
 
-QUERIES: dict[str, str] = {
-    # Generic long-format table: one row per (kpi, brand, commodity, period, category)
-    "default": f"""
+
+def _queries() -> dict[str, str]:
+    """Built on first use so that KPI_TABLE from .env is picked up."""
+    table = os.getenv("KPI_TABLE", KPI_TABLE)
+    return {
+        # Generic long-format table: one row per (kpi, brand, commodity, period, category)
+        "default": f"""
         SELECT
             commodity,
             category,
             CAST([value] AS FLOAT) AS value,
             avg_text
-        FROM {KPI_TABLE}
+        FROM {table}
         WHERE kpi_key = :kpi_key
           AND brand = :brand
           AND period = :period
     """,
-}
+    }
 
 REQUIRED_COLUMNS = ("commodity", "category", "value")
 
 
 class SqlKpiSource:
 
-    def __init__(self, queries: dict[str, str] | None = None, engine=None):
-        self.queries = queries or QUERIES
+    def __init__(self, queries: dict[str, str] | None = None, engine=None, server: str | None = None):
+        self.queries = queries or _queries()
         self._engine = engine
+        self.server = server or KPI_SERVER
 
     @property
     def engine(self):
-        return self._engine if self._engine is not None else database.engine
+        if self._engine is not None:
+            return self._engine
+        return engine_for(self.server)
 
     def fetch(
         self,

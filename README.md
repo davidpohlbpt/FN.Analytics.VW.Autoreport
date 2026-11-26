@@ -133,6 +133,8 @@ Key switches:
 | `SQL_CONN_SSM_PARAM` (+ `SQL_ODBC_DRIVER`, `SQL_ENCRYPT`, `SQL_TRUST_SERVER_CERTIFICATE`) | Lambda: read an ADO-style connection string (`Server=..;Initial Catalog=..;User ID=..;Password=..`) from SSM and set `LOCAL_SQLSERVER_CONN_STR`/`LOCAL_SQLSERVER_DB` |
 | `S3_OUTPUT_BUCKET` | upload decks to `s3://<S3_OUTPUT_BUCKET>/<S3_OUTPUT_PREFIX>/`, overriding `target_location` of the template row |
 | `AUTOREPORT_SCHEMA`, `DEFAULT_TEMPLATE_ID` | control tables |
+| `LOCAL_SQLSERVER_CONN_STR` / `LOCAL_SQLSERVER_CONN_STR_2` | primary server (INT, control tables + Control Center) and secondary server (PROD, backend KPI data); both are used at the same time, `_2` is optional |
+| `KPI_SERVER` (`secondary`/`primary`) | which server the `backend` source queries, default `secondary` |
 | `S3_ENABLED`, `S3_BUCKET`, `S3_TEMPLATE_KEY`, `S3_OUTPUT_PREFIX` | defaults when the template row has no S3 links |
 | `KPI_SOURCE_OVERRIDE` (`stub`/`frontend`/`backend`) | force one source for all KPIs (testing) |
 | `KPI_TABLE`, `DQN_FILTER_*` | backend / frontend source specifics |
