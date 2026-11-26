@@ -62,7 +62,12 @@ Fresh PROD deployment is consolidated into two scripts in `deployment/sql`:
    example recipient rows.
 2. `002_autoreport_frontend.sql` creates the IdentityServer menu entry and ReportDB editor
    configuration, then writes the final DE/EN translations. It requires the IDs 950, 9501,
-   9502, 95001 and 950100-950204 to be free; it checks these before changing anything.
+   9502, 95001 and 950100-950204 to be free; it checks these before changing anything,
+   including the tile options of tiles 9501/9502. Re-running it never duplicates
+   `T_CONTROL_Layout_TileOption` rows: each (TileID, OptionID) pair is inserted only when
+   missing and otherwise updated. Duplicates there make the report tile unreadable for the
+   API (`GetReportTile`), so loading or saving a row in the editor fails with HTTP 500. The
+   script ends with a check that must return no rows.
 
 Run both scripts in that order on the same SQL Server instance. Prerequisites are ReportDB
 with `dbo.T_RESULT_Leitstand_Overview`, the ReportDB frontend configuration tables, and the
@@ -76,6 +81,36 @@ They deliberately leave `dbo.T_RESULT_AutoReportRecipients` untouched (including
 PROD data); they do not migrate that legacy list into the new control table. Back up PROD and
 confirm the target environment and reserved IDs before execution. The scripts have not been
 executed against either database during this change.
+
+### Repairing duplicate tile options (HTTP 500 when saving a recipient)
+
+An installation set up with an earlier version of `002_autoreport_frontend.sql` can contain
+each `(TileID, OptionID)` of tile 9502 twice, because that insert was not guarded against a
+second run. The table still renders, but the API call that runs before a save
+(`GenericReport/update/v2` -> `GetReportTile`) fails with HTTP 500.
+
+Check first; the query must return no rows:
+
+```sql
+SELECT TileID, OptionID, COUNT(*) AS row_count
+FROM dbo.T_CONTROL_Layout_TileOption
+WHERE TileID IN (9501, 9502)
+GROUP BY TileID, OptionID
+HAVING COUNT(*) > 1;
+```
+
+Remove the extra copies, keeping the lowest `TileOptionID` of each pair:
+
+```sql
+DELETE o
+FROM dbo.T_CONTROL_Layout_TileOption o
+JOIN (SELECT TileID, OptionID, MIN(TileOptionID) AS keep_id
+      FROM dbo.T_CONTROL_Layout_TileOption
+      WHERE TileID IN (9501, 9502)
+      GROUP BY TileID, OptionID) k
+  ON k.TileID = o.TileID AND k.OptionID = o.OptionID
+WHERE o.TileOptionID <> k.keep_id;
+```
 
 | Table | Purpose | Key columns |
 |---|---|---|

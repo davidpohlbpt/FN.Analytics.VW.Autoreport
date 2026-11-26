@@ -48,6 +48,7 @@ IF EXISTS (SELECT 1 FROM IdentityServer.dbo.T_CONTROL_GenericHeaderBar WHERE Hea
    OR EXISTS (SELECT 1 FROM dbo.T_CONTROL_Layout_Tiles WHERE TileID IN (9501,9502))
    OR EXISTS (SELECT 1 FROM dbo.T_CONTROL_Layout_Table WHERE TableID = 9501)
    OR EXISTS (SELECT 1 FROM dbo.T_CONTROL_Layout_Text WHERE TextId = 9501)
+   OR EXISTS (SELECT 1 FROM dbo.T_CONTROL_Layout_TileOption WHERE TileID IN (9501,9502))
     THROW 50103, 'One or more reserved AutoReport frontend IDs are already in use; reconcile before deployment.', 1;
 
 SET XACT_ABORT ON;
@@ -150,17 +151,29 @@ VALUES (9501, 950, 0, NULL, NULL, NULL, 1, NULL, 9501, 0, 1, 1, 9502);
 SET IDENTITY_INSERT dbo.T_CONTROL_Layout_Table OFF;
 
 -- OptionID 30 is TablePageSize and must be numeric; a claim string here breaks the grid.
-INSERT INTO dbo.T_CONTROL_Layout_TileOption (TileID, OptionID, Value)
-VALUES (9502, 7, N'1'),
+-- One row per (TileID, OptionID): duplicates make the table tile unreadable for the API
+-- (GetReportTile), and the save then fails with HTTP 500. Hence insert-if-missing only.
+DECLARE @tile_options TABLE (TileID INT, OptionID INT, Value NVARCHAR(MAX));
+INSERT INTO @tile_options (TileID, OptionID, Value)
+VALUES (9502, 7,  N'1'),
        (9502, 17, N'ConfirmationDialogDelete'),
+       (9502, 27, N'AutoReportRecipientsClaim'),
        (9502, 28, N'AutoReportRecipientsClaim'),
        (9502, 29, N'AutoReportRecipientsClaim'),
        (9502, 30, N'10');
 
 INSERT INTO dbo.T_CONTROL_Layout_TileOption (TileID, OptionID, Value)
-SELECT 9502, 27, N'AutoReportRecipientsClaim'
-WHERE NOT EXISTS (SELECT 1 FROM dbo.T_CONTROL_Layout_TileOption
-                  WHERE TileID = 9502 AND OptionID = 27);
+SELECT o.TileID, o.OptionID, o.Value
+FROM @tile_options o
+WHERE NOT EXISTS (SELECT 1 FROM dbo.T_CONTROL_Layout_TileOption t
+                  WHERE t.TileID = o.TileID AND t.OptionID = o.OptionID);
+
+-- Existing rows: keep the configured value in sync (no duplicates are created).
+UPDATE t
+   SET Value = o.Value
+  FROM dbo.T_CONTROL_Layout_TileOption t
+  JOIN @tile_options o ON o.TileID = t.TileID AND o.OptionID = t.OptionID
+ WHERE t.Value <> o.Value;
 
 DECLARE @tk TABLE (
     LanguageCode NVARCHAR(5),
@@ -239,4 +252,13 @@ SELECT ReportDataSourceColumnsID, ColumnName, DataType, ValueSourceColumnId, Ord
 FROM dbo.T_CONTROL_Report_DataSourceColumns
 WHERE ReportDataSourceID IN (9501, 9502)
 ORDER BY ReportDataSourceColumnsID;
+GO
+
+-- Must return no rows: every (TileID, OptionID) of the table tile exists exactly once.
+-- A duplicate here breaks loading and saving rows in the frontend (HTTP 500).
+SELECT TileID, OptionID, COUNT(*) AS row_count
+FROM dbo.T_CONTROL_Layout_TileOption
+WHERE TileID IN (9501, 9502)
+GROUP BY TileID, OptionID
+HAVING COUNT(*) > 1;
 GO
