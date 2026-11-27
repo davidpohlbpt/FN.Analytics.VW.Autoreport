@@ -186,8 +186,8 @@ VALUES
     (N'DE', N'TN_AutoReportRecipients_Main_Titel', N'Auto Report Einstellungen'),
     (N'EN', N'TN_AutoReportRecipients_Main_Info_Titel', N'Information'),
     (N'DE', N'TN_AutoReportRecipients_Main_Info_Titel', N'Information'),
-    (N'EN', N'TN_AutoReportRecipients_Main_Table_Titel', N'Autoreport Configuration'),
-    (N'DE', N'TN_AutoReportRecipients_Main_Table_Titel', N'Autoreport-Konfiguration'),
+    (N'EN', N'TN_AutoReportRecipients_Main_Table_Titel', N'Auto Report Configuration'),
+    (N'DE', N'TN_AutoReportRecipients_Main_Table_Titel', N'Auto Report Konfiguration'),
     (N'EN', N'TN_Helptext_AutoReportRecipients_Main_Table', N'Brand, reporting week and comparison week must be chosen from the allowed values.'),
     (N'DE', N'TN_Helptext_AutoReportRecipients_Main_Table', N'Marke, Berichtswoche und Vergleichswoche müssen aus den erlaubten Werten gewählt werden.'),
     (N'EN', N'TN_AutoReportRecipients_Main_Info', N'<p><br></p>
